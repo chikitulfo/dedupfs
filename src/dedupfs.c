@@ -10,52 +10,194 @@
 #include "log.h"
 
 
-struct dedup_state {
+struct bb_state {
     FILE *logfile;
     char *rootdir;
 };
-#define BB_DATA ((struct dedup_state *) fuse_get_context()->private_data)
+#define BB_DATA ((struct bb_state *) fuse_get_context()->private_data)
 
+// Report errors to logfile and give -errno to caller
+static int bb_error(char *str)
+{
+    int ret = -errno;
+    
+    log_msg("    ERROR %s: %s\n", str, strerror(errno));
+    
+    return ret;
+}
 
-struct fuse_operations dedup_oper = {
-  // .getattr = dedup_getattr,
-  // .readlink = dedup_readlink,
+/**
+ * Check file access permissions
+ *
+ * This will be called for the access() system call.  If the
+ * 'default_permissions' mount option is given, this method is not
+ * called.
+ *
+ * This method is not called under Linux kernel versions 2.4.x
+ *
+ * Introduced in version 2.5
+ */
+int bb_access(const char *path, int mask)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+   
+    log_msg("\nbb_access(path=\"%s\", mask=0%o)\n",
+        path, mask);
+    bb_fullpath(fpath, path);
+    
+    retstat = access(fpath, mask);
+    
+    if (retstat < 0)
+    retstat = bb_error("bb_access access");
+    
+    return retstat;
+}
+
+/** Open directory
+ *
+ * This method should check if the open operation is permitted for
+ * this  directory
+ *
+ * Introduced in version 2.3
+ */
+int bb_opendir(const char *path, struct fuse_file_info *fi)
+{
+    DIR *dp;
+    int retstat = 0;
+    char fpath[PATH_MAX];
+    
+    log_msg("\nbb_opendir(path=\"%s\", fi=0x%08x)\n",
+      path, fi);
+    bb_fullpath(fpath, path);
+    
+    dp = opendir(fpath);
+    if (dp == NULL)
+    retstat = bb_error("bb_opendir opendir");
+    
+    fi->fh = (intptr_t) dp;
+    
+    log_fi(fi);
+    
+    return retstat;
+}
+
+/** Read directory
+ *
+ * This supersedes the old getdir() interface.  New applications
+ * should use this.
+ *
+ * The filesystem may choose between two modes of operation:
+ *
+ * 1) The readdir implementation ignores the offset parameter, and
+ * passes zero to the filler function's offset.  The filler
+ * function will not return '1' (unless an error happens), so the
+ * whole directory is read in a single readdir operation.  This
+ * works just like the old getdir() method.
+ *
+ * 2) The readdir implementation keeps track of the offsets of the
+ * directory entries.  It uses the offset parameter and always
+ * passes non-zero offset to the filler function.  When the buffer
+ * is full (or an error happens) the filler function will return
+ * '1'.
+ *
+ * Introduced in version 2.3
+ */
+int bb_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset,
+           struct fuse_file_info *fi)
+{
+    int retstat = 0;
+    DIR *dp;
+    struct dirent *de;
+    
+    log_msg("\nbb_readdir(path=\"%s\", buf=0x%08x, filler=0x%08x, offset=%lld, fi=0x%08x)\n",
+        path, buf, filler, offset, fi);
+    // once again, no need for fullpath -- but note that I need to cast fi->fh
+    dp = (DIR *) (uintptr_t) fi->fh;
+
+    // Every directory contains at least two entries: . and ..  If my
+    // first call to the system readdir() returns NULL I've got an
+    // error; near as I can tell, that's the only condition under
+    // which I can get an error from readdir()
+    de = readdir(dp);
+    if (de == 0) {
+    retstat = bb_error("bb_readdir readdir");
+    return retstat;
+    }
+
+    // This will copy the entire directory into the buffer.  The loop exits
+    // when either the system readdir() returns NULL, or filler()
+    // returns something non-zero.  The first case just means I've
+    // read the whole directory; the second means the buffer is full.
+    do {
+    log_msg("calling filler with name %s\n", de->d_name);
+    if (filler(buf, de->d_name, NULL, 0) != 0) {
+        log_msg("    ERROR bb_readdir filler:  buffer full");
+        return -ENOMEM;
+    }
+    } while ((de = readdir(dp)) != NULL);
+    
+    log_fi(fi);
+    
+    return retstat;
+}
+
+/** Release directory
+ *
+ * Introduced in version 2.3
+ */
+int bb_releasedir(const char *path, struct fuse_file_info *fi)
+{
+    int retstat = 0;
+    
+    log_msg("\nbb_releasedir(path=\"%s\", fi=0x%08x)\n",
+        path, fi);
+    log_fi(fi);
+    
+    closedir((DIR *) (uintptr_t) fi->fh);
+    
+    return retstat;
+}
+
+struct fuse_operations bb_oper = {
+  // .getattr = bb_getattr,
+  // .readlink = bb_readlink,
   // .getdir = NULL,
-  // .mknod = dedup_mknod,
-  // .mkdir = dedup_mkdir,
-  // .unlink = dedup_unlink,
-  // .rmdir = dedup_rmdir,
-  // .symlink = dedup_symlink,
-  // .rename = dedup_rename,
-  // .link = dedup_link,
-  // .chmod = dedup_chmod,
-  // .chown = dedup_chown,
-  // .truncate = dedup_truncate,
-  // .utime = dedup_utime,
-  // .open = dedup_open,
-  // .read = dedup_read,
-  // .write = dedup_write,
-  // .statfs = dedup_statfs,
-  // .flush = dedup_flush,
-  // .release = dedup_release,
-  // .fsync = dedup_fsync,
-  // .setxattr = dedup_setxattr,
-  // .getxattr = dedup_getxattr,
-  // .listxattr = dedup_listxattr,
-  // .removexattr = dedup_removexattr,
-  // .opendir = dedup_opendir,
-  // .readdir = dedup_readdir,
-  // .releasedir = dedup_releasedir,
-  // .fsyncdir = dedup_fsyncdir,
-  // .init = dedup_init,
-  // .destroy = dedup_destroy,
-  // .access = dedup_access,
-  // .create = dedup_create,
-  // .ftruncate = dedup_ftruncate,
-  // .fgetattr = dedup_fgetattr
+  // .mknod = bb_mknod,
+  // .mkdir = bb_mkdir,
+  // .unlink = bb_unlink,
+  // .rmdir = bb_rmdir,
+  // .symlink = bb_symlink,
+  // .rename = bb_rename,
+  // .link = bb_link,
+  // .chmod = bb_chmod,
+  // .chown = bb_chown,
+  // .truncate = bb_truncate,
+  // .utime = bb_utime,
+  // .open = bb_open,
+  // .read = bb_read,
+  // .write = bb_write,
+  // .statfs = bb_statfs,
+  // .flush = bb_flush,
+  // .release = bb_release,
+  // .fsync = bb_fsync,
+  // .setxattr = bb_setxattr,
+  // .getxattr = bb_getxattr,
+  // .listxattr = bb_listxattr,
+  // .removexattr = bb_removexattr,
+  .opendir = bb_opendir,
+  .readdir = bb_readdir,
+  .releasedir = bb_releasedir,
+  // .fsyncdir = bb_fsyncdir,
+  // .init = bb_init,
+  // .destroy = bb_destroy,
+  // .access = bb_access,
+  // .create = bb_create,
+  // .ftruncate = bb_ftruncate,
+  // .fgetattr = bb_fgetattr
 };
 
-void dedup_usage()
+void bb_usage()
 {
     fprintf(stderr, "usage:  dedupfs [FUSE and mount options] rootDir mountPoint\n");
     abort();
@@ -64,7 +206,7 @@ void dedup_usage()
 int main(int argc, char *argv[])
 {
     int fuse_stat;
-    struct dedup_state *dedup_data;
+    struct bb_state *bb_data;
 
     // asegurarse de que no se ejecuta como root
     if ((getuid() == 0) || (geteuid() == 0)) {
@@ -78,26 +220,26 @@ int main(int argc, char *argv[])
     // rootpoint or mountpoint whose name starts with a hyphen, but so
     // will a zillion other programs)
     if ((argc < 3) || (argv[argc-2][0] == '-') || (argv[argc-1][0] == '-'))
-	dedup_usage();
+	bb_usage();
 
-    dedup_data = malloc(sizeof(struct dedup_state));
-    if (dedup_data == NULL) {
+    bb_data = malloc(sizeof(struct bb_state));
+    if (bb_data == NULL) {
 	perror("main calloc");
 	abort();
     }
 
     // Pull the rootdir out of the argument list and save it in my
     // internal data
-    dedup_data->rootdir = realpath(argv[argc-2], NULL);
+    bb_data->rootdir = realpath(argv[argc-2], NULL);
     argv[argc-2] = argv[argc-1];
     argv[argc-1] = NULL;
     argc--;
     
-    dedup_data->logfile = log_open();
+    bb_data->logfile = log_open();
     
     // turn over control to fuse
     fprintf(stderr, "about to call fuse_main\n");
-    fuse_stat = fuse_main(argc, argv, &dedup_oper, dedup_data);
+    fuse_stat = fuse_main(argc, argv, &bb_oper, bb_data);
     fprintf(stderr, "fuse_main returned %d\n", fuse_stat);
     
     return fuse_stat;
