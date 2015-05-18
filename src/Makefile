@@ -1,3 +1,9 @@
+dedupfs : dedupfs.o log.o
+	gcc -g -o dedupfs dedupfs.o log.o `pkg-config fuse --libs`
+
+dedupfs.o : dedupfs.c log.h params.h
+	gcc -g -Wall `pkg-config fuse --cflags` -c dedupfs.c
+
 bbfs : bbfs.o log.o
 	gcc -g -o bbfs bbfs.o log.o `pkg-config fuse --libs`
 

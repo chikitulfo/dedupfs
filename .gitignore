@@ -2,6 +2,10 @@
 
 bin/
 example/
+*.log
+bbfs
+dedupfs
+/Makefile
 
 ### C ###
 # Object files
