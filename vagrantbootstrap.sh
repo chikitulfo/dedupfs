@@ -1,5 +1,6 @@
 #!/bin/bash
 
 apt-get update
-apt-get install -y libssl-dev
+apt-get install -y libssl-dev pkg-config libfuse2 libfuse-dev \
+	sqlite3 sqlite3-doc libsqlite3-devcd 
 ln -sf /vagrant /home/vagrant/dedupfs

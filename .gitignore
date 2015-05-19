@@ -6,6 +6,7 @@ example/
 bbfs
 dedupfs
 /Makefile
+.vagrant
 
 ### C ###
 # Object files
