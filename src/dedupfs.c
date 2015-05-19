@@ -3,8 +3,16 @@
 
 
 #include <fuse.h>
+#include <ctype.h>
+#include <dirent.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <errno.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/xattr.h>
 #include <openssl/sha.h>
 
 #include "log.h"
@@ -24,6 +32,21 @@ static int bb_error(char *str)
     log_msg("    ERROR %s: %s\n", str, strerror(errno));
     
     return ret;
+}
+
+//  All the paths I see are relative to the root of the mounted
+//  filesystem.  In order to get to the underlying filesystem, I need to
+//  have the mountpoint.  I'll save it away early on in main(), and then
+//  whenever I need a path for something I'll call this to construct
+//  it.
+static void bb_fullpath(char fpath[PATH_MAX], const char *path)
+{
+    strcpy(fpath, BB_DATA->rootdir);
+    strncat(fpath, path, PATH_MAX); // ridiculously long paths will
+            // break here
+
+    log_msg("    bb_fullpath:  rootdir = \"%s\", path = \"%s\", fpath = \"%s\"\n",
+      BB_DATA->rootdir, path, fpath);
 }
 
 /**
@@ -159,6 +182,31 @@ int bb_releasedir(const char *path, struct fuse_file_info *fi)
     return retstat;
 }
 
+/**
+ * Initialize filesystem
+ *
+ * The return value will passed in the private_data field of
+ * fuse_context to all file operations and as a parameter to the
+ * destroy() method.
+ *
+ * Introduced in version 2.3
+ * Changed in version 2.6
+ */
+// Undocumented but extraordinarily useful fact:  the fuse_context is
+// set up before this function is called, and
+// fuse_get_context()->private_data returns the user_data passed to
+// fuse_main().  Really seems like either it should be a third
+// parameter coming in here, or else the fact should be documented
+// (and this might as well return void, as it did in older versions of
+// FUSE).
+void *bb_init(struct fuse_conn_info *conn)
+{
+    
+    log_msg("\nbb_init()\n");
+    
+    return BB_DATA;
+}
+
 struct fuse_operations bb_oper = {
   // .getattr = bb_getattr,
   // .readlink = bb_readlink,
@@ -189,9 +237,9 @@ struct fuse_operations bb_oper = {
   .readdir = bb_readdir,
   .releasedir = bb_releasedir,
   // .fsyncdir = bb_fsyncdir,
-  // .init = bb_init,
+  .init = bb_init,
   // .destroy = bb_destroy,
-  // .access = bb_access,
+  .access = bb_access,
   // .create = bb_create,
   // .ftruncate = bb_ftruncate,
   // .fgetattr = bb_fgetattr
