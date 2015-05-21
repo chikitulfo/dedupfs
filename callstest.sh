@@ -7,9 +7,9 @@ mountpoint=/tmp/callstest/mp
 rootdir=/tmp/callstest/rd
 
 mkdir -p $rootdir $mountpoint
-src/bbfs $rootdir $mountpoint
+src/dedupfs $rootdir $mountpoint
 
-cd $(dirname $mountpoint)
+cd $(/usr/bin/dirname "$mountpoint")
 cd mp
 ls
 touch nuevo
