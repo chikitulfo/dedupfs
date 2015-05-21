@@ -23,9 +23,12 @@
 // maintain bbfs state in here
 #include <limits.h>
 #include <stdio.h>
+#include <sqlite3.h>
+  
 struct bb_state {
     FILE *logfile;
     char *rootdir;
+    sqlite3 *db;
 };
 #define BB_DATA ((struct bb_state *) fuse_get_context()->private_data)
 

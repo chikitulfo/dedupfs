@@ -1,6 +1,5 @@
 
-#define FUSE_USE_VERSION 26
-
+#include "params.h"
 
 #include <fuse.h>
 #include <ctype.h>
@@ -16,13 +15,8 @@
 #include <openssl/sha.h>
 
 #include "log.h"
+#include "database.h"
 
-
-struct bb_state {
-    FILE *logfile;
-    char *rootdir;
-};
-#define BB_DATA ((struct bb_state *) fuse_get_context()->private_data)
 
 // Report errors to logfile and give -errno to caller
 static int bb_error(char *str)
@@ -47,6 +41,30 @@ static void bb_fullpath(char fpath[PATH_MAX], const char *path)
 
     log_msg("    bb_fullpath:  rootdir = \"%s\", path = \"%s\", fpath = \"%s\"\n",
       BB_DATA->rootdir, path, fpath);
+}
+
+/** Get file attributes.
+ *
+ * Similar to stat().  The 'st_dev' and 'st_blksize' fields are
+ * ignored.  The 'st_ino' field is ignored except if the 'use_ino'
+ * mount option is given.
+ */
+int bb_getattr(const char *path, struct stat *statbuf)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+    
+    log_msg("\nbb_getattr(path=\"%s\", statbuf=0x%08x)\n",
+    path, statbuf);
+    bb_fullpath(fpath, path);
+    
+    retstat = lstat(fpath, statbuf);
+    if (retstat != 0)
+  retstat = bb_error("bb_getattr lstat");
+    
+    log_stat(statbuf);
+    
+    return retstat;
 }
 
 /**
@@ -201,14 +219,69 @@ int bb_releasedir(const char *path, struct fuse_file_info *fi)
 // FUSE).
 void *bb_init(struct fuse_conn_info *conn)
 {
-    
+    char * dbpath;
+    struct bb_state *bb_data = BB_DATA;
+
     log_msg("\nbb_init()\n");
+    //Abrimos la base de datos 
+    //Habrá que comprobar si ya existía para funcionar sobre directiorios nuevos
+    dbpath = malloc(sizeof(char)*PATH_MAX);
+    //strcpy(dbpath, bb_data->rootdir);
+    // strncat(dbpath, "/.dedupfs.db", PATH_MAX);
+    bb_fullpath(dbpath,"/.dedupfs.db"); 
+    bb_data->db = opendb(dbpath);
+    free(dbpath);
     
-    return BB_DATA;
+    return bb_data;
+}
+
+/**
+ * Clean up filesystem
+ *
+ * Called on filesystem exit.
+ *
+ * Introduced in version 2.3
+ */
+void bb_destroy(void *userdata)
+{
+    closedb(BB_DATA->db);
+    log_msg("\nbb_destroy(userdata=0x%08x)\n", userdata);
+}
+
+/**
+ * Get attributes from an open file
+ *
+ * This method is called instead of the getattr() method if the
+ * file information is available.
+ *
+ * Currently this is only called after the create() method if that
+ * is implemented (see above).  Later it may be called for
+ * invocations of fstat() too.
+ *
+ * Introduced in version 2.5
+ */
+// Since it's currently only called after bb_create(), and bb_create()
+// opens the file, I ought to be able to just use the fd and ignore
+// the path...
+int bb_fgetattr(const char *path, struct stat *statbuf, struct fuse_file_info *fi)
+{
+    int retstat = 0;
+    
+    log_msg("\nbb_fgetattr(path=\"%s\", statbuf=0x%08x, fi=0x%08x)\n",
+      path, statbuf, fi);
+    log_fi(fi);
+    
+    retstat = fstat(fi->fh, statbuf);
+    if (retstat < 0)
+  retstat = bb_error("bb_fgetattr fstat");
+    
+    log_stat(statbuf);
+    
+    return retstat;
 }
 
 struct fuse_operations bb_oper = {
-  // .getattr = bb_getattr,
+  .getattr = bb_getattr,
   // .readlink = bb_readlink,
   // .getdir = NULL,
   // .mknod = bb_mknod,
@@ -238,11 +311,11 @@ struct fuse_operations bb_oper = {
   .releasedir = bb_releasedir,
   // .fsyncdir = bb_fsyncdir,
   .init = bb_init,
-  // .destroy = bb_destroy,
+  .destroy = bb_destroy,
   .access = bb_access,
   // .create = bb_create,
   // .ftruncate = bb_ftruncate,
-  // .fgetattr = bb_fgetattr
+  .fgetattr = bb_fgetattr
 };
 
 void bb_usage()
