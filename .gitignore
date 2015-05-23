@@ -2,12 +2,15 @@
 
 bin/
 example/
+testdir/
 *.log
 bbfs
 dedupfs
 /Makefile
 /Makefile.malo
 .vagrant
+.cproject
+.project
 
 ### C ###
 # Object files
