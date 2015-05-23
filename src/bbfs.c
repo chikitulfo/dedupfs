@@ -138,7 +138,7 @@ int bb_readlink(const char *path, char *link, size_t size)
 // shouldn't that comment be "if" there is no.... ?
 int bb_mknod(const char *path, mode_t mode, dev_t dev)
 {
-    int retstat = 0;
+    int retstat = 0; 
     char fpath[PATH_MAX];
     
     log_msg("\nbb_mknod(path=\"%s\", mode=0%3o, dev=%lld)\n",

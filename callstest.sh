@@ -1,15 +1,20 @@
 #!/bin/bash
 
 oldpwd="$PWD"
-PATH=$(echo $PATH | cut -f5- -d:)
+rutascript="$(dirname "$(readlink -f "$0")")"
+if [ -z "$rutascript" ] 
+then
+rutascript="."
+fi
 
-mountpoint=/tmp/callstest/mp
-rootdir=/tmp/callstest/rd
+mountpoint=testdir/mp
+rootdir=testdir/rd
 
+cd "$rutascript"
 mkdir -p $rootdir $mountpoint
 src/dedupfs $rootdir $mountpoint
 
-cd $(/usr/bin/dirname "$mountpoint")
+cd $(dirname "$mountpoint")
 cd mp
 ls
 touch nuevo
@@ -33,6 +38,6 @@ touch nuevo
 #rm *
 
 sleep 1
-
-cd "$oldpwd"
+cd "$rutascript"
 fusermount -u $mountpoint
+cd "$oldpwd"

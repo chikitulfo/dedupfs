@@ -60,9 +60,27 @@ int bb_getattr(const char *path, struct stat *statbuf)
     
     retstat = lstat(fpath, statbuf);
     if (retstat != 0)
-  retstat = bb_error("bb_getattr lstat");
+    	retstat = bb_error("bb_getattr lstat");
     
     log_stat(statbuf);
+    
+    return retstat;
+}
+
+/** Change the access and/or modification times of a file */
+/* note -- I'll want to change this as soon as 2.6 is in debian testing */
+int bb_utime(const char *path, struct utimbuf *ubuf)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+    
+    log_msg("\nbb_utime(path=\"%s\", ubuf=0x%08x)\n",
+      path, ubuf);
+    bb_fullpath(fpath, path);
+    
+    retstat = utime(fpath, ubuf);
+    if (retstat < 0)
+      retstat = bb_error("bb_utime utime");
     
     return retstat;
 }
@@ -91,6 +109,79 @@ int bb_access(const char *path, int mask)
     
     if (retstat < 0)
     retstat = bb_error("bb_access access");
+    
+    return retstat;
+}
+
+/** Possibly flush cached data
+ *
+ * BIG NOTE: This is not equivalent to fsync().  It's not a
+ * request to sync dirty data.
+ *
+ * Flush is called on each close() of a file descriptor.  So if a
+ * filesystem wants to return write errors in close() and the file
+ * has cached dirty data, this is a good place to write back data
+ * and return any errors.  Since many applications ignore close()
+ * errors this is not always useful.
+ *
+ * NOTE: The flush() method may be called more than once for each
+ * open().  This happens if more than one file descriptor refers
+ * to an opened file due to dup(), dup2() or fork() calls.  It is
+ * not possible to determine if a flush is final, so each flush
+ * should be treated equally.  Multiple write-flush sequences are
+ * relatively rare, so this shouldn't be a problem.
+ *
+ * Filesystems shouldn't assume that flush will always be called
+ * after some writes, or that if will be called at all.
+ *
+ * Changed in version 2.2
+ */
+int bb_flush(const char *path, struct fuse_file_info *fi)
+{
+    int retstat = 0;
+    
+    log_msg("\nbb_flush(path=\"%s\", fi=0x%08x)\n", path, fi);
+    // no need to get fpath on this one, since I work from fi->fh not the path
+    log_fi(fi);
+  
+    return retstat;
+}
+
+/** Release an open file
+ *
+ * Release is called when there are no more references to an open
+ * file: all file descriptors are closed and all memory mappings
+ * are unmapped.
+ *
+ * For every open() call there will be exactly one release() call
+ * with the same flags and file descriptor.  It is possible to
+ * have a file opened more than once, in which case only the last
+ * release will mean, that no more reads/writes will happen on the
+ * file.  The return value of release is ignored.
+ *
+ * Changed in version 2.2
+ */
+int bb_release(const char *path, struct fuse_file_info *fi)
+{
+    int retstat = 0;
+    struct map_entry entrada;
+    
+    log_msg("\nbb_release(path=\"%s\", fi=0x%08x)\n",
+    path, fi);
+    log_fi(fi);
+    // Obtenemos la información del mapa de ficheros abiertos en escritura
+    if (map_extract(fi->fh, &entrada, 1)	//Si está en el mapa
+    		&& entrada.modificado			//y ha sido modificado
+			&& map_count(entrada.path)<1){ //y era el último aberto
+    	log_msg("    Abierto en escritura, modificado y último\n");
+		//TODO Gestionar cálculo de nuevo hash
+		//Si el hash es diferente, mover de sitio
+		//Puede moverse a un archivo ya existente
+    }
+
+    // We need to close the file.  Had we allocated any resources
+    // (buffers etc) we'd need to free them here as well.
+    retstat = close(fi->fh);
     
     return retstat;
 }
@@ -224,14 +315,11 @@ void *bb_init(struct fuse_conn_info *conn)
 
     log_msg("\nbb_init()\n");
     //Abrimos la base de datos 
-    //Habrá que comprobar si ya existía para funcionar sobre directiorios nuevos
     dbpath = malloc(sizeof(char)*PATH_MAX);
-    //strcpy(dbpath, bb_data->rootdir);
-    // strncat(dbpath, "/.dedupfs.db", PATH_MAX);
-    bb_fullpath(dbpath,"/.dedupfs.db"); 
+    bb_fullpath(dbpath,"/.dedupfs/dedupfs.db");
     bb_data->db = opendb(dbpath);
     free(dbpath);
-    
+    bb_data->mapopenw = map_open();
     return bb_data;
 }
 
@@ -245,7 +333,45 @@ void *bb_init(struct fuse_conn_info *conn)
 void bb_destroy(void *userdata)
 {
     closedb(BB_DATA->db);
+    map_close(BB_DATA->mapopenw);
     log_msg("\nbb_destroy(userdata=0x%08x)\n", userdata);
+}
+
+/**
+ * Create and open a file
+ *
+ * If the file does not exist, first create it with the specified
+ * mode, and then open it.
+ *
+ * If this method is not implemented or under Linux kernel
+ * versions earlier than 2.6.15, the mknod() and open() methods
+ * will be called instead.
+ *
+ * Introduced in version 2.5
+ */
+int bb_create(const char *path, mode_t mode, struct fuse_file_info *fi)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+    int fd;
+    
+    log_msg("\nbb_create(path=\"%s\", mode=0%03o, fi=0x%08x)\n",
+    		path, mode, fi);
+    bb_fullpath(fpath, path);
+    
+    fd = creat(fpath, mode);
+    if (fd < 0)
+    	retstat = bb_error("bb_create creat");
+    
+    fi->fh = fd;
+    
+    log_fi(fi);
+    
+    // Se da por supuesto que una llamada a create equivale a abrir
+    // para escritura, lo introducimos en el mapa.
+    map_add(fi->fh, path, 0, 0);
+
+    return retstat;
 }
 
 /**
@@ -294,13 +420,13 @@ struct fuse_operations bb_oper = {
   // .chmod = bb_chmod,
   // .chown = bb_chown,
   // .truncate = bb_truncate,
-  // .utime = bb_utime,
+  .utime = bb_utime,
   // .open = bb_open,
   // .read = bb_read,
   // .write = bb_write,
   // .statfs = bb_statfs,
-  // .flush = bb_flush,
-  // .release = bb_release,
+  .flush = bb_flush,
+  .release = bb_release,
   // .fsync = bb_fsync,
   // .setxattr = bb_setxattr,
   // .getxattr = bb_getxattr,
@@ -313,7 +439,7 @@ struct fuse_operations bb_oper = {
   .init = bb_init,
   .destroy = bb_destroy,
   .access = bb_access,
-  // .create = bb_create,
+  .create = bb_create,
   // .ftruncate = bb_ftruncate,
   .fgetattr = bb_fgetattr
 };
@@ -322,6 +448,40 @@ void bb_usage()
 {
     fprintf(stderr, "usage:  dedupfs [FUSE and mount options] rootDir mountPoint\n");
     abort();
+}
+
+/**
+ * Comprobar si existe el directorio .dedupdir en el árbol de directorios
+ * subyacente, y crearlo si no existe.
+ */
+static void check_conf_dir(char rootdir[PATH_MAX]){
+	struct stat s;
+	char * dedupdir = malloc(sizeof(char) * PATH_MAX);
+	strcpy(dedupdir, rootdir);
+	strncat(dedupdir, "/.dedupfs", PATH_MAX);
+	int err = stat(dedupdir, &s);
+	if(-1 == err) {
+	    if(ENOENT == errno) {
+	        /* No existe, se crea */
+	    	mkdir(dedupdir, 0777);
+	    } else {
+	        perror("Stat error al acceder al directorio \".dedupfs\"");
+	        exit(1);
+	    }
+	} else {
+	    if(S_ISDIR(s.st_mode)) {
+	        /* Directorio, comprobamos permisos */
+	    	if (!(s.st_mode & S_IRWXU)) {
+	    		perror("\".dedupfs\" debe tener permisos rwx");
+	    		exit(1);
+	    	}
+	    } else {
+	        /* exists but is no dir */
+	        perror("\".dedupfs\" debe ser un directorio o no existir");
+	        exit(1);
+	    }
+	}
+	free(dedupdir);
 }
 
 int main(int argc, char *argv[])
@@ -356,8 +516,14 @@ int main(int argc, char *argv[])
     argv[argc-1] = NULL;
     argc--;
     
-    bb_data->logfile = log_open();
+    bb_data->logfile = log_open("dedupfs.log");
     
+    //Comprobar si .dedupfs existe y que sea legible.
+    check_conf_dir(bb_data->rootdir);
+    //TODO se puede hacer que check_conf devuelva un valor si existen archivos
+    //	en el rootdir, y que dichos archivos se transfieran tras llamar a fuse
+    //  para ello, fuse_main debe volver tras la llamada(lo hace?)
+
     // turn over control to fuse
     fprintf(stderr, "about to call fuse_main\n");
     fuse_stat = fuse_main(argc, argv, &bb_oper, bb_data);

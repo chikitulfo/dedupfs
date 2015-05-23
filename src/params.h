@@ -23,13 +23,22 @@
 // maintain bbfs state in here
 #include <limits.h>
 #include <stdio.h>
-#include <sqlite3.h>
   
 struct bb_state {
     FILE *logfile;
     char *rootdir;
-    sqlite3 *db;
+    void *db; // Base de datos que almacena la información de archivos.
+    void *mapopenw; // Mapa que gestiona los archivos abiertos para escritura.
 };
+
+//Entrada en el mapa de ficheros abiertos en escritura
+struct map_entry {
+	unsigned long long int fh;
+	char path[PATH_MAX];
+	char deduplicado;
+	char modificado;
+};
+
 #define BB_DATA ((struct bb_state *) fuse_get_context()->private_data)
 
 #endif

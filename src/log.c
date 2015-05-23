@@ -11,25 +11,15 @@
 */
 
 #include "params.h"
-
-#include <fuse.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-
-#include <sys/types.h>
-#include <sys/stat.h>
-
 #include "log.h"
 
-FILE *log_open()
+FILE *log_open(char path[PATH_MAX])
 {
     FILE *logfile;
     
     // very first thing, open up the logfile and mark that we got in
     // here.  If we can't open the logfile, we're dead.
-    logfile = fopen("dedupfs.log", "w");
+    logfile = fopen(path, "w");
     if (logfile == NULL) {
 	perror("logfile");
 	exit(EXIT_FAILURE);
