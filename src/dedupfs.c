@@ -123,6 +123,115 @@ int bb_getattr(const char *path, struct stat *statbuf)
     return retstat;
 }
 
+/** Create a file node
+ *
+ * There is no create() operation, mknod() will be called for
+ * creation of all non-directory, non-symlink nodes.
+ */
+// shouldn't that comment be "if" there is no.... ?
+int bb_mknod(const char *path, mode_t mode, dev_t dev)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+
+    log_msg("\nbb_mknod(path=\"%s\", mode=0%3o, dev=%lld)\n",
+	  path, mode, dev);
+    bb_fullpath(fpath, path);
+
+    // On Linux this could just be 'mknod(path, mode, rdev)' but this
+    //  is more portable
+    if (S_ISREG(mode)) {
+        retstat = open(fpath, O_CREAT | O_EXCL | O_WRONLY, mode);
+	if (retstat < 0)
+	    retstat = bb_error("bb_mknod open");
+        else {
+            retstat = close(retstat);
+	    if (retstat < 0)
+		retstat = bb_error("bb_mknod close");
+	}
+    } else
+	if (S_ISFIFO(mode)) {
+	    retstat = mkfifo(fpath, mode);
+	    if (retstat < 0)
+		retstat = bb_error("bb_mknod mkfifo");
+	} else {
+	    retstat = mknod(fpath, mode, dev);
+	    if (retstat < 0)
+		retstat = bb_error("bb_mknod mknod");
+	}
+
+    return retstat;
+}
+
+/** Create a directory */
+int bb_mkdir(const char *path, mode_t mode)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+
+    log_msg("\nbb_mkdir(path=\"%s\", mode=0%3o)\n",
+	    path, mode);
+    bb_fullpath(fpath, path);
+
+    retstat = mkdir(fpath, mode);
+    if (retstat < 0)
+	retstat = bb_error("bb_mkdir mkdir");
+
+    return retstat;
+}
+
+/** Remove a directory */
+int bb_rmdir(const char *path)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+
+    log_msg("bb_rmdir(path=\"%s\")\n",
+	    path);
+    bb_fullpath(fpath, path);
+
+    retstat = rmdir(fpath);
+    if (retstat < 0)
+	retstat = bb_error("bb_rmdir rmdir");
+
+    return retstat;
+}
+
+/** Change the permission bits of a file */
+int bb_chmod(const char *path, mode_t mode)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+
+    log_msg("\nbb_chmod(fpath=\"%s\", mode=0%03o)\n",
+	    path, mode);
+    bb_fullpath(fpath, path);
+
+    retstat = chmod(fpath, mode);
+    if (retstat < 0)
+	retstat = bb_error("bb_chmod chmod");
+
+    return retstat;
+}
+
+/** Change the owner and group of a file */
+int bb_chown(const char *path, uid_t uid, gid_t gid)
+
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+
+    log_msg("\nbb_chown(path=\"%s\", uid=%d, gid=%d)\n",
+	    path, uid, gid);
+    bb_fullpath(fpath, path);
+
+    retstat = chown(fpath, uid, gid);
+    if (retstat < 0)
+	retstat = bb_error("bb_chown chown");
+
+    return retstat;
+}
+
 /** Change the size of a file */
 int bb_truncate(const char *path, off_t newsize)
 {
@@ -266,9 +375,36 @@ int bb_write(const char *path, const char *buf, size_t size, off_t offset,
     if (retstat < 0)
 	retstat = bb_error("bb_write pwrite");
 
+    // Marcamos el archivo como modificado
     if(size >0){
     	map_set_modificado(fi->fh);
     }
+
+    return retstat;
+}
+
+/** Get file system statistics
+ *
+ * The 'f_frsize', 'f_favail', 'f_fsid' and 'f_flag' fields are ignored
+ *
+ * Replaced 'struct statfs' parameter with 'struct statvfs' in
+ * version 2.5
+ */
+int bb_statfs(const char *path, struct statvfs *statv)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+
+    log_msg("\nbb_statfs(path=\"%s\", statv=0x%08x)\n",
+	    path, statv);
+    bb_fullpath(fpath, path);
+
+    // get stats for underlying filesystem
+    retstat = statvfs(fpath, statv);
+    if (retstat < 0)
+	retstat = bb_error("bb_statfs statvfs");
+
+    log_statvfs(statv);
 
     return retstat;
 }
@@ -374,6 +510,32 @@ int bb_release(const char *path, struct fuse_file_info *fi)
 		//retstat = close(fi->fh);
     }
     retstat = close(fi->fh);
+    return retstat;
+}
+
+/** Synchronize file contents
+ *
+ * If the datasync parameter is non-zero, then only the user data
+ * should be flushed, not the meta data.
+ *
+ * Changed in version 2.2
+ */
+int bb_fsync(const char *path, int datasync, struct fuse_file_info *fi)
+{
+    int retstat = 0;
+
+    log_msg("\nbb_fsync(path=\"%s\", datasync=%d, fi=0x%08x)\n",
+	    path, datasync, fi);
+    log_fi(fi);
+
+    if (datasync)
+	retstat = fdatasync(fi->fh);
+    else
+	retstat = fsync(fi->fh);
+
+    if (retstat < 0)
+	bb_error("bb_fsync fsync");
+
     return retstat;
 }
 
@@ -736,24 +898,24 @@ struct fuse_operations bb_oper = {
   .getattr = bb_getattr,
   // .readlink = bb_readlink,
   // .getdir = NULL,
-  // .mknod = bb_mknod,
-  // .mkdir = bb_mkdir,
+  .mknod = bb_mknod,
+  .mkdir = bb_mkdir,
   // .unlink = bb_unlink,
-  // .rmdir = bb_rmdir,
+  .rmdir = bb_rmdir,
   // .symlink = bb_symlink,
   // .rename = bb_rename,
   // .link = bb_link,
-  // .chmod = bb_chmod,
-  // .chown = bb_chown,
+  .chmod = bb_chmod,
+  .chown = bb_chown,
   .truncate = bb_truncate,
   .utime = bb_utime,
   .open = bb_open,
   .read = bb_read,
   .write = bb_write,
-  // .statfs = bb_statfs,
+  .statfs = bb_statfs,
   .flush = bb_flush,
   .release = bb_release,
-  // .fsync = bb_fsync,
+  .fsync = bb_fsync,
   .setxattr = bb_setxattr,
   .getxattr = bb_getxattr,
   .listxattr = bb_listxattr,
