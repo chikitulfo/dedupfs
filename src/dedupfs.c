@@ -101,6 +101,7 @@ int bb_getattr(const char *path, struct stat *statbuf)
 {
     int retstat = 0;
     char fpath[PATH_MAX];
+    struct db_entry entradabd;
     
     log_msg("\nbb_getattr(path=\"%s\", statbuf=0x%08x)\n",
     path, statbuf);
@@ -110,8 +111,15 @@ int bb_getattr(const char *path, struct stat *statbuf)
     if (retstat != 0)
     	retstat = bb_error("bb_getattr lstat");
     
+    //Si el archivo está deduplicado, el tamaño está en la bd
+    if( db_get(path,&entradabd) && entradabd.deduplicados > 0){
+    	statbuf->st_size = entradabd.size;
+    	//Necesario incluir st_blocks? Lo incluimos
+    	//damos por supuesto tamaño de bloque de 4096
+    	statbuf->st_blocks = (entradabd.size / 4096 + (entradabd.size % 4096 > 0))*8;
+    }
     log_stat(statbuf);
-    
+
     return retstat;
 }
 
@@ -173,12 +181,20 @@ int bb_open(const char *path, struct fuse_file_info *fi)
     int retstat = 0;
     int fd;
     char fpath[PATH_MAX];
+    struct db_entry entradadb;
 
     log_msg("\nbb_open(path\"%s\", fi=0x%08x)\n",
 	    path, fi);
-    bb_fullpath(fpath, path);
 
-    //TODO obtener autentico path
+    //Obtener auténtico path
+    if (db_get(path, &entradadb)) {
+    	//Si está deduplicado hay que abrir una copia.
+    	bb_fullpath(fpath, entradadb.datapath);
+    }
+    else {
+    	bb_fullpath(fpath, path);
+    }
+    log_msg("    open(%s)\n", fpath);
     fd = open(fpath, fi->flags);
     if (fd < 0)
 	retstat = bb_error("bb_open open");
