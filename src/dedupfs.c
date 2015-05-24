@@ -339,6 +339,8 @@ int bb_release(const char *path, struct fuse_file_info *fi)
         		if (db_get_datapath_hash(nuevohash, datapath, &deduplicados)){ //está ya ese hash
     				db_insertar(path, nuevohash, datapath, size, deduplicados);
     				db_incrementar_duplicados(nuevohash);
+    				//Truncamos el archivo en el lugar original
+    				truncate(truepath,0);
     			} else {
     				db_insertar(path, nuevohash, path, size, 0);
     			}
