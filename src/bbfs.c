@@ -999,7 +999,7 @@ int main(int argc, char *argv[])
     argv[argc-1] = NULL;
     argc--;
     
-    bb_data->logfile = log_open();
+    bb_data->logfile = log_open("bbfs.log");
     
     // turn over control to fuse
     fprintf(stderr, "about to call fuse_main\n");

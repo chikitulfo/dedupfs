@@ -12,7 +12,8 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/xattr.h>
-#include <openssl/sha.h>
+#include <openssl/evp.h>
+
 
 #include "log.h"
 #include "database.h"
@@ -22,10 +23,57 @@
 static int bb_error(char *str)
 {
     int ret = -errno;
-    
+
     log_msg("    ERROR %s: %s\n", str, strerror(errno));
-    
+
     return ret;
+}
+
+/**
+ * Calcula el sha1sum y lo devuelve como cadena en outHashString
+ */
+static void calcular_hash(const char * path, char * outHashString, unsigned int * filesize){
+	ssize_t leidos;
+	unsigned int sizedigest, i;
+	int fd;
+	unsigned char hash[20];
+	char buffer[4096], *outptr;
+
+	if ( (fd = open(path,O_RDONLY)) == -1){
+		bb_error("[calcular_hash]open");
+	}
+	*filesize = 0;
+	EVP_MD_CTX *context = EVP_MD_CTX_create();
+	EVP_DigestInit_ex(context, EVP_sha1(), NULL);
+	//Leer desde el principio
+	if(lseek(fd, 0, SEEK_SET)<0){
+		bb_error("[calcular_hash]lseek");
+	}
+	leidos = read(fd,buffer,4096);
+	if(leidos<0){
+		bb_error("[calcular_hash]read");
+	}
+	else{
+		*filesize += leidos;
+		EVP_DigestUpdate(context,buffer,leidos);
+		while (leidos == 4096){
+			leidos = read(fd,buffer,4096);
+			*filesize += leidos;
+			EVP_DigestUpdate(context,buffer,leidos);
+		}
+	}
+	close(fd);
+	EVP_DigestFinal_ex(context,hash,&sizedigest);
+	EVP_MD_CTX_destroy(context);
+
+	//Introducirlo en la cadena outHashString
+	outptr = outHashString;
+	for(i=0; i<sizedigest; i++){
+		//log_msg("%02x", hash[i]);
+		sprintf(outptr,"%02x", hash[i]);
+		outptr+=2;
+	}
+	outptr[0]=0; //Terminar la cadena en 0
 }
 
 //  All the paths I see are relative to the root of the mounted
@@ -67,6 +115,31 @@ int bb_getattr(const char *path, struct stat *statbuf)
     return retstat;
 }
 
+/** Change the size of a file */
+int bb_truncate(const char *path, off_t newsize)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+
+    log_msg("\nbb_truncate(path=\"%s\", newsize=%lld)\n",
+	    path, newsize);
+    bb_fullpath(fpath, path);
+
+    //TODO
+    //Recuperar de la bd.
+    //	*Si está y su tamaño variaría
+    //		*Se hace 0: Se quita de la bd y punto
+    //		* !=0 : (crear workingCopy si deduplicado), truncar, y recalcular hash.
+    //	*Si no estaba, mandar a truncate y listo
+    if(/*No estaba en la bd*/1){
+        retstat = truncate(fpath, newsize);
+    }
+    if (retstat < 0)
+	bb_error("bb_truncate truncate");
+
+    return retstat;
+}
+
 /** Change the access and/or modification times of a file */
 /* note -- I'll want to change this as soon as 2.6 is in debian testing */
 int bb_utime(const char *path, struct utimbuf *ubuf)
@@ -85,31 +158,102 @@ int bb_utime(const char *path, struct utimbuf *ubuf)
     return retstat;
 }
 
-/**
- * Check file access permissions
+/** File open operation
  *
- * This will be called for the access() system call.  If the
- * 'default_permissions' mount option is given, this method is not
- * called.
+ * No creation, or truncation flags (O_CREAT, O_EXCL, O_TRUNC)
+ * will be passed to open().  Open should check if the operation
+ * is permitted for the given flags.  Optionally open may also
+ * return an arbitrary filehandle in the fuse_file_info structure,
+ * which will be passed to all file operations.
  *
- * This method is not called under Linux kernel versions 2.4.x
- *
- * Introduced in version 2.5
+ * Changed in version 2.2
  */
-int bb_access(const char *path, int mask)
+int bb_open(const char *path, struct fuse_file_info *fi)
 {
     int retstat = 0;
+    int fd;
     char fpath[PATH_MAX];
-   
-    log_msg("\nbb_access(path=\"%s\", mask=0%o)\n",
-        path, mask);
+
+    log_msg("\nbb_open(path\"%s\", fi=0x%08x)\n",
+	    path, fi);
     bb_fullpath(fpath, path);
-    
-    retstat = access(fpath, mask);
-    
+
+    //TODO obtener autentico path
+    fd = open(fpath, fi->flags);
+    if (fd < 0)
+	retstat = bb_error("bb_open open");
+
+    fi->fh = fd;
+    log_fi(fi);
+    // Comprobar si se abre para escritura, y añadir al mapa
+    if ((fi->flags&O_RDWR) == O_RDWR || (fi->flags&O_WRONLY) == O_WRONLY){
+    	map_add(fi->fh, path, 0, 0);
+    }
+
+    return retstat;
+}
+
+/** Read data from an open file
+ *
+ * Read should return exactly the number of bytes requested except
+ * on EOF or error, otherwise the rest of the data will be
+ * substituted with zeroes.  An exception to this is when the
+ * 'direct_io' mount option is specified, in which case the return
+ * value of the read system call will reflect the return value of
+ * this operation.
+ *
+ * Changed in version 2.2
+ */
+// I don't fully understand the documentation above -- it doesn't
+// match the documentation for the read() system call which says it
+// can return with anything up to the amount of data requested. nor
+// with the fusexmp code which returns the amount of data also
+// returned by read.
+int bb_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+{
+    int retstat = 0;
+
+    log_msg("\nbb_read(path=\"%s\", buf=0x%08x, size=%d, offset=%lld, fi=0x%08x)\n",
+	    path, buf, size, offset, fi);
+    // no need to get fpath on this one, since I work from fi->fh not the path
+    log_fi(fi);
+
+    retstat = pread(fi->fh, buf, size, offset);
     if (retstat < 0)
-    retstat = bb_error("bb_access access");
-    
+	retstat = bb_error("bb_read read");
+
+    return retstat;
+}
+
+/** Write data to an open file
+ *
+ * Write should return exactly the number of bytes requested
+ * except on error.  An exception to this is when the 'direct_io'
+ * mount option is specified (see read operation).
+ *
+ * Changed in version 2.2
+ */
+// As  with read(), the documentation above is inconsistent with the
+// documentation for the write() system call.
+int bb_write(const char *path, const char *buf, size_t size, off_t offset,
+	     struct fuse_file_info *fi)
+{
+    int retstat = 0;
+
+    log_msg("\nbb_write(path=\"%s\", buf=0x%08x, size=%d, offset=%lld, fi=0x%08x)\n",
+	    path, buf, size, offset, fi
+	    );
+    // no need to get fpath on this one, since I work from fi->fh not the path
+    log_fi(fi);
+
+    retstat = pwrite(fi->fh, buf, size, offset);
+    if (retstat < 0)
+	retstat = bb_error("bb_write pwrite");
+
+    if(size >0){
+    	map_set_modificado(fi->fh);
+    }
+
     return retstat;
 }
 
@@ -165,24 +309,129 @@ int bb_release(const char *path, struct fuse_file_info *fi)
 {
     int retstat = 0;
     struct map_entry entrada;
-    
+    char nuevohash[41];
     log_msg("\nbb_release(path=\"%s\", fi=0x%08x)\n",
     path, fi);
     log_fi(fi);
     // Obtenemos la información del mapa de ficheros abiertos en escritura
-    if (map_extract(fi->fh, &entrada, 1)	//Si está en el mapa
-    		&& entrada.modificado			//y ha sido modificado
-			&& map_count(entrada.path)<1){ //y era el último aberto
-    	log_msg("    Abierto en escritura, modificado y último\n");
-		//TODO Gestionar cálculo de nuevo hash
-		//Si el hash es diferente, mover de sitio
+    if (map_extract(fi->fh, &entrada, 1)  //Si está en el mapa
+    		&& entrada.modificado		  //y ha sido modificado
+			&& map_count(entrada.path)<1){//y era el último abierto
+    	log_msg("    Abierto en escritura, modificado y último.\n");
+    	unsigned int size;
+    	struct db_entry entrada;
+    	char truepath[PATH_MAX]; //estoy declarando las cosas aquí
+    	bb_fullpath(truepath, path);
+    	calcular_hash(truepath, nuevohash, &size);
+    	log_msg("    NewHash: %s\n", nuevohash);
+    	if( db_get(path,&entrada)) {
+        	log_msg("    OldHash: %s\n", entrada.sha1sum);
+    		// Había una entrada en la bd. Comparar hashes y tamaño
+    		// Si el tamaño es 0, se saca de la bd y punto
+    		// Si los hashes son diferentes,
+    		// Comprobar si estaba deduplicado :-/, si no se borra ese archivo
+    		// Comprobar si newhash tiene más entradas.
+    	} else {
+    		//No había entrada con este path, se inserta y nada más
+    		if (size > 0){ //Si el tamaño es mayor que 0, hay que insertar
+    			char datapath[4096]; int deduplicados;
+    			//if (db_get_datapath_hash(nuevohash, &(entrada.datapath), &(entrada.deduplicados))){ //está ya ese hash
+        		if (db_get_datapath_hash(nuevohash, datapath, &deduplicados)){ //está ya ese hash
+    				db_insertar(path, nuevohash, datapath, size, deduplicados);
+    				db_incrementar_duplicados(nuevohash);
+    			} else {
+    				db_insertar(path, nuevohash, path, size, 0);
+    			}
+    		}
+    	}
+		//TODO Si el hash es diferente, mover de sitio
 		//Puede moverse a un archivo ya existente
+    	// *Obtener hash previo. Si es igual no se hace nada.
+    	//	*Si es diferente, hacer modificaciones TODO
+    	// *Si hay entradas ya con ese hash, deduplicar
     }
-
-    // We need to close the file.  Had we allocated any resources
-    // (buffers etc) we'd need to free them here as well.
+    else{
+		// We need to close the file.  Had we allocated any resources
+		// (buffers etc) we'd need to free them here as well.
+		//retstat = close(fi->fh);
+    }
     retstat = close(fi->fh);
-    
+    return retstat;
+}
+
+/** Set extended attributes */
+int bb_setxattr(const char *path, const char *name, const char *value, size_t size, int flags)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+
+    log_msg("\nbb_setxattr(path=\"%s\", name=\"%s\", value=\"%s\", size=%d, flags=0x%08x)\n",
+	    path, name, value, size, flags);
+    bb_fullpath(fpath, path);
+
+    retstat = lsetxattr(fpath, name, value, size, flags);
+    if (retstat < 0)
+	retstat = bb_error("bb_setxattr lsetxattr");
+
+    return retstat;
+}
+
+/** Get extended attributes */
+int bb_getxattr(const char *path, const char *name, char *value, size_t size)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+
+    log_msg("\nbb_getxattr(path = \"%s\", name = \"%s\", value = 0x%08x, size = %d)\n",
+	    path, name, value, size);
+    bb_fullpath(fpath, path);
+
+    retstat = lgetxattr(fpath, name, value, size);
+    if (retstat < 0)
+	retstat = bb_error("bb_getxattr lgetxattr");
+    else
+	log_msg("    value = \"%s\"\n", value);
+
+    return retstat;
+}
+
+/** List extended attributes */
+int bb_listxattr(const char *path, char *list, size_t size)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+    char *ptr;
+
+    log_msg("bb_listxattr(path=\"%s\", list=0x%08x, size=%d)\n",
+	    path, list, size
+	    );
+    bb_fullpath(fpath, path);
+
+    retstat = llistxattr(fpath, list, size);
+    if (retstat < 0)
+	retstat = bb_error("bb_listxattr llistxattr");
+
+    log_msg("    returned attributes (length %d):\n", retstat);
+    for (ptr = list; ptr < list + retstat; ptr += strlen(ptr)+1)
+	log_msg("    \"%s\"\n", ptr);
+
+    return retstat;
+}
+
+/** Remove extended attributes */
+int bb_removexattr(const char *path, const char *name)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+
+    log_msg("\nbb_removexattr(path=\"%s\", name=\"%s\")\n",
+	    path, name);
+    bb_fullpath(fpath, path);
+
+    retstat = lremovexattr(fpath, name);
+    if (retstat < 0)
+	retstat = bb_error("bb_removexattr lrmovexattr");
+
     return retstat;
 }
 
@@ -317,7 +566,7 @@ void *bb_init(struct fuse_conn_info *conn)
     //Abrimos la base de datos 
     dbpath = malloc(sizeof(char)*PATH_MAX);
     bb_fullpath(dbpath,"/.dedupfs/dedupfs.db");
-    bb_data->db = opendb(dbpath);
+    bb_data->db = db_open(dbpath);
     free(dbpath);
     bb_data->mapopenw = map_open();
     return bb_data;
@@ -332,9 +581,38 @@ void *bb_init(struct fuse_conn_info *conn)
  */
 void bb_destroy(void *userdata)
 {
-    closedb(BB_DATA->db);
+	//Cerramos las bd
+    db_close(BB_DATA->db);
     map_close(BB_DATA->mapopenw);
     log_msg("\nbb_destroy(userdata=0x%08x)\n", userdata);
+}
+
+/**
+ * Check file access permissions
+ *
+ * This will be called for the access() system call.  If the
+ * 'default_permissions' mount option is given, this method is not
+ * called.
+ *
+ * This method is not called under Linux kernel versions 2.4.x
+ *
+ * Introduced in version 2.5
+ */
+int bb_access(const char *path, int mask)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+
+    log_msg("\nbb_access(path=\"%s\", mask=0%o)\n",
+        path, mask);
+    bb_fullpath(fpath, path);
+
+    retstat = access(fpath, mask);
+
+    if (retstat < 0)
+    retstat = bb_error("bb_access access");
+
+    return retstat;
 }
 
 /**
@@ -370,6 +648,36 @@ int bb_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     // Se da por supuesto que una llamada a create equivale a abrir
     // para escritura, lo introducimos en el mapa.
     map_add(fi->fh, path, 0, 0);
+
+    return retstat;
+}
+
+/**
+ * Change the size of an open file
+ *
+ * This method is called instead of the truncate() method if the
+ * truncation was invoked from an ftruncate() system call.
+ *
+ * If this method is not implemented or under Linux kernel
+ * versions earlier than 2.6.15, the truncate() method will be
+ * called instead.
+ *
+ * Introduced in version 2.5
+ */
+int bb_ftruncate(const char *path, off_t offset, struct fuse_file_info *fi)
+{
+    int retstat = 0;
+
+    log_msg("\nbb_ftruncate(path=\"%s\", offset=%lld, fi=0x%08x)\n",
+	    path, offset, fi);
+    log_fi(fi);
+
+    //Establecer como modificado este descriptor
+    map_set_modificado(fi->fh);
+
+    retstat = ftruncate(fi->fh, offset);
+    if (retstat < 0)
+	retstat = bb_error("bb_ftruncate ftruncate");
 
     return retstat;
 }
@@ -419,19 +727,19 @@ struct fuse_operations bb_oper = {
   // .link = bb_link,
   // .chmod = bb_chmod,
   // .chown = bb_chown,
-  // .truncate = bb_truncate,
+  .truncate = bb_truncate,
   .utime = bb_utime,
-  // .open = bb_open,
-  // .read = bb_read,
-  // .write = bb_write,
+  .open = bb_open,
+  .read = bb_read,
+  .write = bb_write,
   // .statfs = bb_statfs,
   .flush = bb_flush,
   .release = bb_release,
   // .fsync = bb_fsync,
-  // .setxattr = bb_setxattr,
-  // .getxattr = bb_getxattr,
-  // .listxattr = bb_listxattr,
-  // .removexattr = bb_removexattr,
+  .setxattr = bb_setxattr,
+  .getxattr = bb_getxattr,
+  .listxattr = bb_listxattr,
+  .removexattr = bb_removexattr,
   .opendir = bb_opendir,
   .readdir = bb_readdir,
   .releasedir = bb_releasedir,
@@ -440,7 +748,7 @@ struct fuse_operations bb_oper = {
   .destroy = bb_destroy,
   .access = bb_access,
   .create = bb_create,
-  // .ftruncate = bb_ftruncate,
+  .ftruncate = bb_ftruncate,
   .fgetattr = bb_fgetattr
 };
 
@@ -484,8 +792,23 @@ static void check_conf_dir(char rootdir[PATH_MAX]){
 	free(dedupdir);
 }
 
+void maindebug(){
+	/*
+	fprintf(stderr,"MAIN DEBUG\n");
+	char hashstring[41];
+	fprintf(stderr,"Calcular hash:\n");
+	calcular_hash("/tmp/dedupfsdebug",hashstring, );
+	fprintf(stderr,"%s\n", hashstring);
+	fprintf(stderr,"OK");
+	exit(0);
+	*/
+}
+
 int main(int argc, char *argv[])
 {
+    //DEBUG
+    //maindebug(); //DEBUG
+    //DEBUG
     int fuse_stat;
     struct bb_state *bb_data;
 
@@ -515,7 +838,7 @@ int main(int argc, char *argv[])
     argv[argc-2] = argv[argc-1];
     argv[argc-1] = NULL;
     argc--;
-    
+
     bb_data->logfile = log_open("dedupfs.log");
     
     //Comprobar si .dedupfs existe y que sea legible.

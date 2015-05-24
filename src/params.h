@@ -31,6 +31,14 @@ struct bb_state {
     void *mapopenw; // Mapa que gestiona los archivos abiertos para escritura.
 };
 
+//Entrada de la base de datos
+struct db_entry {
+	char path[PATH_MAX];
+	char sha1sum[41];
+	char datapath[PATH_MAX];
+	unsigned int size;
+	int deduplicados;
+};
 //Entrada en el mapa de ficheros abiertos en escritura
 struct map_entry {
 	unsigned long long int fh;
