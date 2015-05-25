@@ -76,6 +76,32 @@ static void calcular_hash(const char * path, char * outHashString, unsigned int 
 	outptr[0]=0; //Terminar la cadena en 0
 }
 
+/**
+ * Función encargada de asegurar que los directorios necesarios para guardar
+ * los datos en el directorio de datos están creados.
+ * El path donde se almacenen será .dedupfs/data/X/Y/Z/HASH donde X, Y y Z son
+ * los tres primeros caracteres del hash.
+ */
+void preparar_datapath(char * hash, char * datapath) {
+	int rv;
+	log_msg("    preparar_datapath()\n");
+
+	sprintf(datapath, "%s/.dedupfs/data/%c/", BB_DATA->rootdir, hash[0]);
+	rv = mkdir(datapath, 0777); 	//Intentamos crear X, y asumimos el error EEXIST
+	if(rv != 0 && errno != EEXIST)
+		bb_error("mkdir: ");
+	sprintf(datapath, "%s%c/", datapath, hash[1]);
+	rv = mkdir(datapath, 0777); 	//Intentamos crear Y, y asumimos el error EEXIST
+	if(rv != 0 && errno != EEXIST)
+		bb_error("mkdir: ");
+	sprintf(datapath, "%s%c/", datapath, hash[2]);
+	rv = mkdir(datapath, 0777); 	//Intentamos crear Z, y asumimos el error EEXIST
+	if(rv != 0 && errno != EEXIST)
+		bb_error("mkdir: ");
+	//Devolver sin rootdir
+	sprintf(datapath, "/.dedupfs/data/%c/%c/%c/%s", hash[0], hash[1], hash[2], hash);
+}
+
 //  All the paths I see are relative to the root of the mounted
 //  filesystem.  In order to get to the underlying filesystem, I need to
 //  have the mountpoint.  I'll save it away early on in main(), and then
@@ -473,6 +499,7 @@ int bb_release(const char *path, struct fuse_file_info *fi)
     	unsigned int size;
     	struct db_entry entrada;
     	char truepath[PATH_MAX]; //estoy declarando las cosas aquí
+		char truedatapath[PATH_MAX];
     	bb_fullpath(truepath, path);
     	calcular_hash(truepath, nuevohash, &size);
     	log_msg("    NewHash: %s\n", nuevohash);
@@ -492,9 +519,22 @@ int bb_release(const char *path, struct fuse_file_info *fi)
     				//Truncamos el archivo en el lugar original
     				truncate(truepath,0);
     			} else {
-    				//TODO Mover a la dirección del hash. Hay que dejar un archivo vacío.
-
-    				db_insertar(path, nuevohash, path, size, 0);
+    				//Mover a la dirección del hash. Hay que dejar un archivo vacío.
+    				//conservamos los permisos originales
+    				struct stat *prestat = malloc(sizeof(struct stat));
+    				if (fstat(fi->fh,prestat)) bb_error("    Error fstat al mover:");
+    				//obtenemos el path donde se van a almacenar los datos
+    				preparar_datapath(nuevohash, entrada.datapath);
+    				bb_fullpath(truedatapath,entrada.datapath);
+    				//movemos los datos a la carpeta de datos
+    				if (!rename(truepath, truedatapath)) bb_error("rename");
+    				//Volvemos a crear el archivo del path original, con sus permisos
+    				int i = creat(truepath,prestat->st_mode);
+    				if (i == -1) bb_error("Create tras mover a datadir");
+    				close(i);
+    				free(prestat);
+    				//insertamos la entrada en la base de datos
+    				db_insertar(path, nuevohash, entrada.datapath, size, 0);
     			}
     		}
     	}
@@ -951,6 +991,9 @@ static void check_conf_dir(char rootdir[PATH_MAX]){
 	if(-1 == err) {
 	    if(ENOENT == errno) {
 	        /* No existe, se crea */
+	    	mkdir(dedupdir, 0777);
+	    	// El de los datos también
+	    	strcat(dedupdir,"/data");
 	    	mkdir(dedupdir, 0777);
 	    } else {
 	        perror("Stat error al acceder al directorio \".dedupfs\"");
