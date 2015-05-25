@@ -486,14 +486,14 @@ int bb_release(const char *path, struct fuse_file_info *fi)
     	} else {
     		//No había entrada con este path, se inserta y nada más
     		if (size > 0){ //Si el tamaño es mayor que 0, hay que insertar
-    			char datapath[4096]; int deduplicados;
-    			//if (db_get_datapath_hash(nuevohash, &(entrada.datapath), &(entrada.deduplicados))){ //está ya ese hash
-        		if (db_get_datapath_hash(nuevohash, datapath, &deduplicados)){ //está ya ese hash
-    				db_insertar(path, nuevohash, datapath, size, deduplicados);
+    			if (db_get_datapath_hash(nuevohash, entrada.datapath, &(entrada.deduplicados))){ //está ya ese hash
+    				db_insertar(path, nuevohash, entrada.datapath, size, entrada.deduplicados);
     				db_incrementar_duplicados(nuevohash);
     				//Truncamos el archivo en el lugar original
     				truncate(truepath,0);
     			} else {
+    				//TODO Mover a la dirección del hash. Hay que dejar un archivo vacío.
+
     				db_insertar(path, nuevohash, path, size, 0);
     			}
     		}
