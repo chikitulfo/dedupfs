@@ -82,7 +82,7 @@ static void calcular_hash(const char * path, char * outHashString, unsigned int 
  * El path donde se almacenen será .dedupfs/data/X/Y/Z/HASH donde X, Y y Z son
  * los tres primeros caracteres del hash.
  */
-void preparar_datapath(char * hash, char * datapath) {
+static void preparar_datapath(char * hash, char * datapath) {
 	int rv;
 	log_msg("    preparar_datapath()\n");
 
@@ -100,6 +100,39 @@ void preparar_datapath(char * hash, char * datapath) {
 		bb_error("mkdir: ");
 	//Devolver sin rootdir
 	sprintf(datapath, "/.dedupfs/data/%c/%c/%c/%s", hash[0], hash[1], hash[2], hash);
+}
+
+/**
+ * Copia un archivo en otro.
+ * Utilizado en las copias de escritura de archivos deduplicados
+ */
+static void copiar ( const char * src, const char * dst){
+	unsigned char buffer[4096];
+	int fdsrc, fddst, leidos, escritos;
+	log_msg("    copiar( %s ;\n"
+			"            %s\n", src, dst);
+	if ( (fdsrc = open(src,O_RDONLY)) == -1){
+		bb_error("[copiar]open src");
+	}
+	else if ((fddst = creat(dst,0777)) == -1){
+		bb_error("[copiar]create dst");
+	}
+	else {
+		leidos = read(fdsrc,buffer,4096);
+		escritos = write(fddst,buffer,leidos);
+		if(leidos<0 || escritos<0){
+			bb_error("[copiar]read/write");}
+		else{
+			while (leidos == 4096){
+				leidos = read(fdsrc,buffer,4096);
+				escritos = write(fddst,buffer,leidos);
+				if(leidos<0 || escritos<0){
+					bb_error("[copiar]read/write");}
+			}
+		}
+	}
+	close(fdsrc);
+	close(fddst);
 }
 
 //  All the paths I see are relative to the root of the mounted
@@ -137,8 +170,8 @@ int bb_getattr(const char *path, struct stat *statbuf)
     if (retstat != 0)
     	retstat = bb_error("bb_getattr lstat");
     
-    //Si el archivo está deduplicado, el tamaño está en la bd
-    if( db_get(path,&entradabd) && entradabd.deduplicados > 0){
+    //Si el archivo está en la bd, el tamaño se toma de ahí
+    if( db_get(path,&entradabd)){
     	statbuf->st_size = entradabd.size;
     	//Necesario incluir st_blocks? Lo incluimos
     	//damos por supuesto tamaño de bloque de 4096
@@ -313,18 +346,36 @@ int bb_utime(const char *path, struct utimbuf *ubuf)
  */
 int bb_open(const char *path, struct fuse_file_info *fi)
 {
-    int retstat = 0;
     int fd;
     char fpath[PATH_MAX];
     struct db_entry entradadb;
+    int retstat = 0;
+    char escritura = 0;
 
     log_msg("\nbb_open(path\"%s\", fi=0x%08x)\n",
 	    path, fi);
 
+    if ((fi->flags&O_RDWR) == O_RDWR || (fi->flags&O_WRONLY) == O_WRONLY){
+    	escritura = 1;
+    }
     //Obtener auténtico path
     if (db_get(path, &entradadb)) {
-    	//Si está deduplicado hay que abrir una copia.
     	bb_fullpath(fpath, entradadb.datapath);
+    	//Si está deduplicado y va a escribirse, hay que usar una copia.
+    	if(escritura && entradadb.deduplicados > 0) {
+    		//Se hace la copia si es el primero en abrirse
+    		if (map_count(path) == 0){
+				char * oldfpath = strdup(fpath);
+	    		strcat(fpath, "w"); //Las copias de trabajo tienen una "w" al final
+				copiar(oldfpath, fpath);
+				free(oldfpath);
+    		} else {
+        		strcat(fpath, "w");
+    		}
+    	}
+//    	else {
+//    		bb_fullpath(fpath, entradadb.datapath);
+//    	}
     }
     else {
     	bb_fullpath(fpath, path);
@@ -336,8 +387,8 @@ int bb_open(const char *path, struct fuse_file_info *fi)
 
     fi->fh = fd;
     log_fi(fi);
-    // Comprobar si se abre para escritura, y añadir al mapa
-    if ((fi->flags&O_RDWR) == O_RDWR || (fi->flags&O_WRONLY) == O_WRONLY){
+    // Si se abre para escritura, añadir al mapa
+    if (escritura){
     	map_add(fi->fh, path, 0, 0);
     }
 
@@ -495,11 +546,12 @@ int bb_release(const char *path, struct fuse_file_info *fi)
     if (map_extract(fi->fh, &entrada, 1)  //Si está en el mapa
     		&& entrada.modificado		  //y ha sido modificado
 			&& map_count(entrada.path)<1){//y era el último abierto
-    	log_msg("    Abierto en escritura, modificado y último.\n");
     	unsigned int size;
     	struct db_entry entrada;
-    	char truepath[PATH_MAX]; //estoy declarando las cosas aquí
+    	char truepath[PATH_MAX];
 		char truedatapath[PATH_MAX];
+
+    	log_msg("    Abierto en escritura, modificado y último.\n");
     	bb_fullpath(truepath, path);
     	calcular_hash(truepath, nuevohash, &size);
     	log_msg("    NewHash: %s\n", nuevohash);
@@ -510,28 +562,33 @@ int bb_release(const char *path, struct fuse_file_info *fi)
     		// Si los hashes son diferentes,
     		// Comprobar si estaba deduplicado :-/, si no se borra ese archivo
     		// Comprobar si newhash tiene más entradas.
-    	} else {
+    	} else { //FIXME esto no debería ser u else
     		//No había entrada con este path, se inserta y nada más
     		if (size > 0){ //Si el tamaño es mayor que 0, hay que insertar
-    			if (db_get_datapath_hash(nuevohash, entrada.datapath, &(entrada.deduplicados))){ //está ya ese hash
+    			if (db_get_datapath_hash(nuevohash, entrada.datapath, &(entrada.deduplicados))){
+    				//Si el hash ya está en la bd, añadimos este archivo
     				db_insertar(path, nuevohash, entrada.datapath, size, entrada.deduplicados);
     				db_incrementar_duplicados(nuevohash);
     				//Truncamos el archivo en el lugar original
     				truncate(truepath,0);
-    			} else {
+    			} else { //Único archivo con este hash
     				//Mover a la dirección del hash. Hay que dejar un archivo vacío.
     				//conservamos los permisos originales
+    				int fd ;
     				struct stat *prestat = malloc(sizeof(struct stat));
-    				if (fstat(fi->fh,prestat)) bb_error("    Error fstat al mover:");
+    				if (fstat(fi->fh,prestat)) {
+    					bb_error("    Error fstat al mover:");}
     				//obtenemos el path donde se van a almacenar los datos
     				preparar_datapath(nuevohash, entrada.datapath);
     				bb_fullpath(truedatapath,entrada.datapath);
     				//movemos los datos a la carpeta de datos
-    				if (!rename(truepath, truedatapath)) bb_error("rename");
+    				if (rename(truepath, truedatapath)) {
+    					bb_error("rename");}
     				//Volvemos a crear el archivo del path original, con sus permisos
-    				int i = creat(truepath,prestat->st_mode);
-    				if (i == -1) bb_error("Create tras mover a datadir");
-    				close(i);
+    				fd = creat(truepath,prestat->st_mode);
+    				if (fd == -1) {
+    					bb_error("Create tras mover a datadir");}
+    				close(fd);
     				free(prestat);
     				//insertamos la entrada en la base de datos
     				db_insertar(path, nuevohash, entrada.datapath, size, 0);
@@ -925,9 +982,12 @@ int bb_fgetattr(const char *path, struct stat *statbuf, struct fuse_file_info *f
       path, statbuf, fi);
     log_fi(fi);
     
+    //Ahora mismo recibimos el stat del deduplicado.
+    //Se puede solucionar llamando a getattr desde aquí
+
     retstat = fstat(fi->fh, statbuf);
     if (retstat < 0)
-  retstat = bb_error("bb_fgetattr fstat");
+    	retstat = bb_error("bb_fgetattr fstat");
     
     log_stat(statbuf);
     
