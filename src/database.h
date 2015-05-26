@@ -15,11 +15,13 @@ int db_insertar(const char *path, const char *shasum, const char *datapath, unsi
 int db_get(const char *path, struct db_entry *entrada);
 int db_get_datapath_hash(const char * hash, char * path, int * deduplicados);
 void db_incrementar_duplicados(const char * hash);
+void db_decrementar_duplicados(const char * hash);
+int db_eliminar(const char * path);
 
 
 sqlite3 * map_open ();
 int map_close();
-int map_add(unsigned long long int fh, const char * path, char deduplicado, char modificado);
+int map_add(unsigned long long int fh, const char * path, int deduplicado, char modificado);
 int map_extract(unsigned long long int fh, struct map_entry * entrada, int eliminar);
 int map_count(const char * path);
 void map_set_modificado(unsigned long long int fh);

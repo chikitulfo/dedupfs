@@ -45,13 +45,13 @@ int db_close (sqlite3 *db) {
     return sqlite3_close(db);
 }
 /**
- * Se introduce esta entrada en la base de datos de ficheros
+ * Se introduce esta entrada en la base de datos de ficheros. Si ya existe se reemplaza
  */
 int db_insertar(const char * path, const char * shasum, const char * datapath, unsigned int size, int deduplicados){
 	int rc;
 	static sqlite3_stmt * stmt;
 	sqlite3 * mapa = BB_DATA->db;
-	sqlite3_prepare_v2(mapa,"INSERT INTO files VALUES ( ?1, ?2, ?3, ?4, ?5)", -1,&stmt,NULL);
+	sqlite3_prepare_v2(mapa,"INSERT OR REPLACE INTO files VALUES ( ?1, ?2, ?3, ?4, ?5)", -1,&stmt,NULL);
 	log_msg("    db_insertar(%s, %s, %s, %u, %d)\n", path, shasum, datapath, size, deduplicados);
 	sqlite3_bind_text(stmt,1,path,-1,SQLITE_STATIC);
 	sqlite3_bind_text(stmt,2,shasum,-1,SQLITE_STATIC);
@@ -134,7 +134,7 @@ void db_incrementar_duplicados(const char * hash){
 	static sqlite3_stmt *stmt;
 	sqlite3 * mapa = BB_DATA->db;
 	int rc;
-	log_msg("    db_incrementar_duplicados(%s)", hash);
+	log_msg("    db_incrementar_duplicados(%s)\n", hash);
 	sqlite3_prepare_v2(mapa,"UPDATE files SET deduplicados = deduplicados+1 "
 			"WHERE (shasum = ?1)", -1,&stmt,NULL);
 	sqlite3_bind_text(stmt,1,hash,-1,SQLITE_STATIC);
@@ -143,6 +143,44 @@ void db_incrementar_duplicados(const char * hash){
 			log_msg("       ERROR incrementando duplicados: %s\n", sqlite3_errmsg(mapa));
 	}
 	sqlite3_finalize(stmt);
+}
+
+/**
+ * Se decrementa la cuenta de duplicados en cada entrada que coincida con el hash.
+ */
+void db_decrementar_duplicados(const char * hash){
+	static sqlite3_stmt *stmt;
+	sqlite3 * mapa = BB_DATA->db;
+	int rc;
+	log_msg("    db_decrementar_duplicados(%s)\n", hash);
+	sqlite3_prepare_v2(mapa,"UPDATE files SET deduplicados = deduplicados-1 "
+			"WHERE (shasum = ?1)", -1,&stmt,NULL);
+	sqlite3_bind_text(stmt,1,hash,-1,SQLITE_STATIC);
+	rc = sqlite3_step(stmt);
+	if (rc != SQLITE_DONE) {
+			log_msg("       ERROR decrementando duplicados: %s\n", sqlite3_errmsg(mapa));
+	}
+	sqlite3_finalize(stmt);
+}
+
+/**
+ * Elimina una entrada de la base de datos.
+ */
+int db_eliminar(const char * path){
+	static sqlite3_stmt *stmt;
+	sqlite3 * mapa = BB_DATA->db;
+	int rc;
+	log_msg("    db_eliminar(%s)\n",path);
+	sqlite3_prepare_v2(mapa,"DELETE FROM files WHERE (path = ?1)", -1,&stmt,NULL);
+	sqlite3_bind_text(stmt,1,path,-1,SQLITE_STATIC);
+	rc = sqlite3_step(stmt);
+	if (rc != SQLITE_DONE) {
+			log_msg("       ERROR eliminando en db: %s\n", sqlite3_errmsg(mapa));
+			rc = 0;
+	}
+	sqlite3_finalize(stmt);
+	rc=1;
+	return rc;
 }
 
 
@@ -156,24 +194,12 @@ sqlite3 * map_open() {
     int rc;
     char * dbErrMsg = 0;
     rc = sqlite3_open(":memory:", &mapa);
-    char * path; //DEBUG
-    asprintf(&path, "%s/.dedupfs/memdata.db", BB_DATA->rootdir); //DEBUG
-    //rc = sqlite3_open(path, &mapa); //DEBUG
-    free(path);
     if( rc ){
         log_msg("      Can't open database: %s\n", sqlite3_errmsg(mapa));
         sqlite3_close(mapa);
         abort();
     }
     log_msg("      bd mem_mapa() creada\n");
-    //BEGIN DEBUG TODO ELIMINAR Cuando la pasemos a memoria
-    rc=sqlite3_exec(mapa, "DROP TABLE IF EXISTS mapa", /*callback*/NULL, 0, &dbErrMsg); //DEBUG
-    if( rc!=SQLITE_OK ){
-    	log_msg("      Error accediendo a la base de datos: %s\n", dbErrMsg);
-    	sqlite3_free(dbErrMsg);
-    	abort();
-    }
-    //END DEBUG
     // Crear la tabla si no está creada
     char * peticion =
     		"CREATE TABLE IF NOT EXISTS mapa("
@@ -198,7 +224,7 @@ int map_close () {
 /**
  * Se inserta un nuevo descriptor de fichero en el mapa de ficheros abiertos.
  */
-int map_add(unsigned long long int fh,const char * path, char deduplicado, char modificado){
+int map_add(unsigned long long int fh,const char * path, int deduplicado, char modificado){
 	int rc;
 	static sqlite3_stmt * stmt;
 	sqlite3 * mapa = BB_DATA->mapopenw;
@@ -235,10 +261,10 @@ int map_extract(unsigned long long int fh, struct map_entry * entrada, int elimi
 	if (rc == SQLITE_ROW) {//Devuelve una fila. recuperamos los valores
 		entrada->fh=sqlite3_column_int64(stmt_select,0);
 		strcpy (entrada->path, (char *)sqlite3_column_text(stmt_select,1));
-		entrada->deduplicado = sqlite3_column_int(stmt_select,2);
+		entrada->deduplicados = sqlite3_column_int(stmt_select,2);
 		entrada->modificado = sqlite3_column_int(stmt_select,3);
 		log_msg("      Encontrada fila: %llu, %s, %d, %d\n",
-				entrada->fh, entrada->path, entrada->deduplicado, entrada->modificado);
+				entrada->fh, entrada->path, entrada->deduplicados, entrada->modificado);
 		if (eliminar){ //Eliminamos si se solicita
 			sqlite3_prepare_v2(mapa,"DELETE FROM mapa WHERE (fh = ?1)", -1,&stmt_delete,NULL);
 			sqlite3_bind_int64(stmt_delete,1,fh);

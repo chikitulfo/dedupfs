@@ -84,7 +84,7 @@ static void calcular_hash(const char * path, char * outHashString, unsigned int 
  */
 static void preparar_datapath(char * hash, char * datapath) {
 	int rv;
-	log_msg("    preparar_datapath()\n");
+	log_msg("    preparar_datapath(%s)\n",datapath);
 
 	sprintf(datapath, "%s/.dedupfs/data/%c/", BB_DATA->rootdir, hash[0]);
 	rv = mkdir(datapath, 0777); 	//Intentamos crear X, y asumimos el error EEXIST
@@ -373,12 +373,10 @@ int bb_open(const char *path, struct fuse_file_info *fi)
         		strcat(fpath, "w");
     		}
     	}
-//    	else {
-//    		bb_fullpath(fpath, entradadb.datapath);
-//    	}
     }
     else {
     	bb_fullpath(fpath, path);
+    	entradadb.deduplicados = 0; //para incluirlo en el mapa
     }
     log_msg("    open(%s)\n", fpath);
     fd = open(fpath, fi->flags);
@@ -389,7 +387,7 @@ int bb_open(const char *path, struct fuse_file_info *fi)
     log_fi(fi);
     // Si se abre para escritura, añadir al mapa
     if (escritura){
-    	map_add(fi->fh, path, 0, 0);
+    	map_add(fi->fh, path, entradadb.deduplicados, 0);
     }
 
     return retstat;
@@ -537,37 +535,78 @@ int bb_flush(const char *path, struct fuse_file_info *fi)
 int bb_release(const char *path, struct fuse_file_info *fi)
 {
     int retstat = 0;
-    struct map_entry entrada;
+    struct map_entry entradamap;
     char nuevohash[41];
     log_msg("\nbb_release(path=\"%s\", fi=0x%08x)\n",
     path, fi);
     log_fi(fi);
+    //Cerramos el archivo, y después vemos.
+    retstat = close(fi->fh);
     // Obtenemos la información del mapa de ficheros abiertos en escritura
-    if (map_extract(fi->fh, &entrada, 1)  //Si está en el mapa
-    		&& entrada.modificado		  //y ha sido modificado
-			&& map_count(entrada.path)<1){//y era el último abierto
+    if (map_extract(fi->fh, &entradamap, 1)  //Si está en el mapa
+    		&& entradamap.modificado		  //y ha sido modificado
+			&& map_count(entradamap.path)<1){//y era el último abierto
     	unsigned int size;
-    	struct db_entry entrada;
+    	struct db_entry entradadb;
     	char truepath[PATH_MAX];
 		char truedatapath[PATH_MAX];
 
     	log_msg("    Abierto en escritura, modificado y último.\n");
-    	bb_fullpath(truepath, path);
-    	calcular_hash(truepath, nuevohash, &size);
-    	log_msg("    NewHash: %s\n", nuevohash);
-    	if( db_get(path,&entrada)) {
-        	log_msg("    OldHash: %s\n", entrada.sha1sum);
+
+    	//Si se encuentra en la base de datos, el archivo no es nuevo
+    	if( db_get(path,&entradadb)) {
+    		//El archivo no es nuevo, se ha modificado
+    		if(entradamap.deduplicados>0) {
+        		// Si estaba deduplicado, es una copia para escritura.
+    			bb_fullpath(truedatapath, strcat(entradadb.datapath,"w"));
+    		} else {
+    			bb_fullpath(truedatapath, entradadb.datapath);
+    		}
+    		//Calculamos el hash
+    		calcular_hash(truedatapath, nuevohash, &size);
+    		log_msg("    NewHash: %s\n", nuevohash);
+    		log_msg("    OldHash: %s\n", entradadb.sha1sum);
     		// Había una entrada en la bd. Comparar hashes y tamaño
-    		// Si el tamaño es 0, se saca de la bd y punto
-    		// Si los hashes son diferentes,
-    		// Comprobar si estaba deduplicado :-/, si no se borra ese archivo
-    		// Comprobar si newhash tiene más entradas.
-    	} else { //FIXME esto no debería ser u else
+        	if (size == 0){
+        		// Si el tamaño es 0, se saca de la bd y punto.
+        		db_eliminar(path);
+        		if(entradadb.deduplicados==0){
+        			// Borrar los datos también, es el último.
+        			unlink(truedatapath);
+        		} else {
+        			// No es el último, decrementar
+        			db_decrementar_duplicados(entradadb.sha1sum);
+        		}
+        	}
+        	else if (strcmp(entradadb.sha1sum,nuevohash)) {
+        		// Si el tamaño no es 0, y los hashes son diferentes
+        		if (db_get_datapath_hash(nuevohash, entradadb.datapath,&(entradadb.deduplicados))){
+            		// El nuevo hash ya está presente, eliminar
+            		unlink(truedatapath);
+    				db_insertar(path, nuevohash, entradadb.datapath, size, entradadb.deduplicados);
+    				db_incrementar_duplicados(nuevohash);
+        		}else {
+        			//Es el primero, mover(si está deduplicado estamos moviendo la copia)
+    				preparar_datapath(nuevohash, entradadb.datapath);
+    				char * newdatapath = truepath; //newdatapath apunta a truepath pero se llama diferente por claridad
+    				bb_fullpath(newdatapath, entradadb.datapath);
+        			if (rename(truedatapath,newdatapath)) {
+        				log_msg("    rename(%s,%s)",truedatapath,newdatapath);
+    					bb_error("rename");}
+    				db_insertar(path, nuevohash, entradadb.datapath, size, 0);
+        		}
+				db_decrementar_duplicados(entradadb.sha1sum);
+        	}
+    	} else {
+        	bb_fullpath(truepath, path);
+        	//Calculamos el hash
+        	calcular_hash(truepath, nuevohash, &size);
+    		log_msg("    NewHash: %s\n", nuevohash);
     		//No había entrada con este path, se inserta y nada más
     		if (size > 0){ //Si el tamaño es mayor que 0, hay que insertar
-    			if (db_get_datapath_hash(nuevohash, entrada.datapath, &(entrada.deduplicados))){
+    			if (db_get_datapath_hash(nuevohash, entradadb.datapath, &(entradadb.deduplicados))){
     				//Si el hash ya está en la bd, añadimos este archivo
-    				db_insertar(path, nuevohash, entrada.datapath, size, entrada.deduplicados);
+    				db_insertar(path, nuevohash, entradadb.datapath, size, entradadb.deduplicados);
     				db_incrementar_duplicados(nuevohash);
     				//Truncamos el archivo en el lugar original
     				truncate(truepath,0);
@@ -576,11 +615,11 @@ int bb_release(const char *path, struct fuse_file_info *fi)
     				//conservamos los permisos originales
     				int fd ;
     				struct stat *prestat = malloc(sizeof(struct stat));
-    				if (fstat(fi->fh,prestat)) {
-    					bb_error("    Error fstat al mover:");}
+    				if (stat(truepath,prestat)) {
+    					bb_error("stat al mover");}
     				//obtenemos el path donde se van a almacenar los datos
-    				preparar_datapath(nuevohash, entrada.datapath);
-    				bb_fullpath(truedatapath,entrada.datapath);
+    				preparar_datapath(nuevohash, entradadb.datapath);
+    				bb_fullpath(truedatapath,entradadb.datapath);
     				//movemos los datos a la carpeta de datos
     				if (rename(truepath, truedatapath)) {
     					bb_error("rename");}
@@ -591,22 +630,11 @@ int bb_release(const char *path, struct fuse_file_info *fi)
     				close(fd);
     				free(prestat);
     				//insertamos la entrada en la base de datos
-    				db_insertar(path, nuevohash, entrada.datapath, size, 0);
+    				db_insertar(path, nuevohash, entradadb.datapath, size, 0);
     			}
     		}
     	}
-		//TODO Si el hash es diferente, mover de sitio
-		//Puede moverse a un archivo ya existente
-    	// *Obtener hash previo. Si es igual no se hace nada.
-    	//	*Si es diferente, hacer modificaciones TODO
-    	// *Si hay entradas ya con ese hash, deduplicar
     }
-    else{
-		// We need to close the file.  Had we allocated any resources
-		// (buffers etc) we'd need to free them here as well.
-		//retstat = close(fi->fh);
-    }
-    retstat = close(fi->fh);
     return retstat;
 }
 

@@ -43,7 +43,7 @@ struct db_entry {
 struct map_entry {
 	unsigned long long int fh;
 	char path[PATH_MAX];
-	char deduplicado;
+	int deduplicados;
 	char modificado;
 };
 
