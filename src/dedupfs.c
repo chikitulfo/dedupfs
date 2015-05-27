@@ -30,7 +30,7 @@ static int bb_error(char *str)
 }
 
 /**
- * Calcula el sha1sum y lo devuelve como cadena en outHashString
+ * Calcula el sha1sum de path y lo devuelve como cadena en outHashString
  */
 static void calcular_hash(const char * path, char * outHashString, unsigned int * filesize){
 	ssize_t leidos;
@@ -81,6 +81,8 @@ static void calcular_hash(const char * path, char * outHashString, unsigned int 
  * los datos en el directorio de datos están creados.
  * El path donde se almacenen será .dedupfs/data/X/Y/Z/HASH donde X, Y y Z son
  * los tres primeros caracteres del hash.
+ * Devuelve en datapath la ruta donde se almacenan los datos de ese hash.
+ * (Relativa a la raiz del sf fuse)
  */
 static void preparar_datapath(char * hash, char * datapath) {
 	int rv;
@@ -287,31 +289,6 @@ int bb_chown(const char *path, uid_t uid, gid_t gid)
     retstat = chown(fpath, uid, gid);
     if (retstat < 0)
 	retstat = bb_error("bb_chown chown");
-
-    return retstat;
-}
-
-/** Change the size of a file */
-int bb_truncate(const char *path, off_t newsize)
-{
-    int retstat = 0;
-    char fpath[PATH_MAX];
-
-    log_msg("\nbb_truncate(path=\"%s\", newsize=%lld)\n",
-	    path, newsize);
-    bb_fullpath(fpath, path);
-
-    //TODO
-    //Recuperar de la bd.
-    //	*Si está y su tamaño variaría
-    //		*Se hace 0: Se quita de la bd y punto
-    //		* !=0 : (crear workingCopy si deduplicado), truncar, y recalcular hash.
-    //	*Si no estaba, mandar a truncate y listo
-    if(/*No estaba en la bd*/1){
-        retstat = truncate(fpath, newsize);
-    }
-    if (retstat < 0)
-	bb_error("bb_truncate truncate");
 
     return retstat;
 }
@@ -983,6 +960,38 @@ int bb_ftruncate(const char *path, off_t offset, struct fuse_file_info *fi)
     retstat = ftruncate(fi->fh, offset);
     if (retstat < 0)
 	retstat = bb_error("bb_ftruncate ftruncate");
+
+    return retstat;
+}
+
+/** Change the size of a file */
+int bb_truncate(const char *path, off_t newsize)
+{
+    int retstat = 0;
+
+    log_msg("\nbb_truncate(path=\"%s\", newsize=%lld)\n",
+	    path, newsize);
+
+    // Truncate puede verse como una apertura de archivo,
+    // truncamiento hasta el tamaño adecuado (modificación),
+    // y cierre con todas las implicaciones que tiene el cierre.
+    struct fuse_file_info *fi = malloc(sizeof(struct fuse_file_info));
+    fi->flags = O_RDWR; //Para acceder en escritura
+    retstat = bb_open(path, fi);
+    if (retstat == 0) {
+    	//Se ha abierto adecuadamente, truncamos
+    	retstat = bb_ftruncate(path,newsize,fi);
+    	if (retstat == 0) {
+    		//Se ha truncado adecuadamente, cerramos
+    		retstat = bb_release(path, fi);
+    	}
+    }
+    free(fi);
+
+    if (retstat < 0) {
+    	bb_error("bb_truncate truncate");
+    	close(fi->fh);
+    }
 
     return retstat;
 }
