@@ -22,7 +22,7 @@ sqlite3 * db_open (const char *path) {
         sqlite3_close(db);
         abort();
     }
-    // Crear la tabla si no está creada
+    // Crear las tablas si no están creadas
     char * peticion =
     		"CREATE TABLE IF NOT EXISTS files("
     			"path TEXT PRIMARY KEY ON CONFLICT FAIL,"
@@ -30,7 +30,17 @@ sqlite3 * db_open (const char *path) {
     			"datapath TEXT NOT NULL ON CONFLICT FAIL,"
     			"size INTEGER NOT NULL ON CONFLICT FAIL,"
     			"deduplicados INTEGER NOT NULL ON CONFLICT FAIL"
-    			");";
+    		");"
+    		"CREATE TABLE IF NOT EXISTS links("
+    			"linkpath TEXT PRIMARY KEY ON CONFLICT FAIL,"
+    			"originalpath TEXT NOT NULL ON CONFLICT FAIL"
+    		");";
+    /*
+    CREATE TABLE IF NOT EXISTS links(
+    	linkpath TEXT PRIMARY KEY ON CONFLICT FAIL,
+    	originalpath TEXT NOT NULL ON CONFLICT FAIL
+	);
+     */
     rc = sqlite3_exec(db, peticion, /*callback*/NULL, 0, &dbErrMsg);
     if( rc!=SQLITE_OK ){
     	log_msg("      Error accediendo a la base de datos\n"
@@ -121,7 +131,7 @@ int db_get_datapath_hash(const char * hash, char * path, int * deduplicados) {
 		found=1;
 	}
 	else if (rc != SQLITE_DONE) {
-		log_msg("       ERROR recuperando del mapa: %s\n", sqlite3_errmsg(mapa));
+		log_msg("       ERROR recuperando: %s\n", sqlite3_errmsg(mapa));
 	}
 	sqlite3_finalize(stmt);
 	return found;
@@ -181,6 +191,118 @@ int db_eliminar(const char * path){
 	sqlite3_finalize(stmt);
 	rc=1;
 	return rc;
+}
+
+/**
+ * Añade una entrada a la tabla de enlaces físicos, enlace es el path enlazado,
+ * pathoriginal es el path del archivo creado originalmente.
+ * Los enlaces físicos no hacen distinción entre enlace y enlazado, aquí es
+ * necesario puesto que en la tabla de archivos deduplicados utilizamos el path
+ * del archivo original.
+ * También se desreferencia hasta apuntar al último nodo
+ * Devuelve true  si se ha insertado, false si no.
+ */
+int db_addLink(const char * pathoriginal, const char * enlace){
+	int rc, retval=1;
+	static sqlite3_stmt * stmt;
+	sqlite3 * db = BB_DATA->db;
+	char * desreferenciado = malloc(PATH_MAX);
+	char * desreferenciar = strdup(pathoriginal);
+	char * auxptr;
+	//Desreferenciamos
+	log_msg("    db_addlink(%s, %s)\n", pathoriginal, enlace);
+	while(db_getLinkPath(desreferenciar,desreferenciado)) {
+		auxptr = desreferenciado;
+		desreferenciado = desreferenciar;
+		desreferenciar = auxptr;
+	}
+
+	int rc;
+	static sqlite3_stmt * stmt;
+	sqlite3 * db = BB_DATA->db;
+	sqlite3_prepare_v2(db,"INSERT INTO links VALUES ( ?1, ?2)", -1,&stmt,NULL);
+	log_msg("      desreferenciado: %s\n", desreferenciado);
+	sqlite3_bind_text(stmt,1,enlace,-1,SQLITE_STATIC);
+	sqlite3_bind_text(stmt,2,desreferenciado,-1,SQLITE_STATIC);
+
+	rc = sqlite3_step(stmt);
+	if (rc != SQLITE_DONE) {
+		log_msg("      ERROR: %s\n", sqlite3_errmsg(db));
+		retval = 0;
+	}
+	sqlite3_finalize(stmt);
+	free(desreferenciado);
+	free(desreferenciar);
+	return retval;
+}
+
+/**
+ * Recupera el path del archivo original al que apunta enlace, y lo guarda en
+ * pathoriginal.
+ * Devuelve true si se ha recuperado, false si no.
+ */
+int db_getLinkPath(const char * enlace, char * pathoriginal) {
+	static sqlite3_stmt *stmt;
+	sqlite3 * db = BB_DATA->db;
+	int rc,found=0;
+
+	sqlite3_prepare_v2(db,"SELECT originalpath FROM links WHERE (linkpath = ?1)", -1,&stmt,NULL);
+	sqlite3_bind_text(stmt,1,enlace,-1,SQLITE_STATIC);
+	log_msg("    db_getLinkPath(%s)\n", enlace);
+	rc = sqlite3_step(stmt);
+	log_msg("      rc_code= %d\n", rc);
+	if (rc == SQLITE_ROW) {//Devuelve una fila. recuperamos los valores
+		strcpy (pathoriginal, (char *)sqlite3_column_text(stmt,0));
+
+		log_msg("      Encontrada: %s, %s\n", enlace, pathoriginal);
+		found=1;
+	}
+	else if (rc != SQLITE_DONE) {
+		log_msg("       ERROR recuperando: %s\n", sqlite3_errmsg(db));
+	}
+	sqlite3_finalize(stmt);
+	return found;
+}
+
+/*
+ * Elimina el enlace indicado por path. Si path contiene el archivo original,
+ * se sustituye pathoriginal por el de la primera entrada.
+ */
+int db_unlink(const char * path) {
+	int rc;
+	char *dbErrMsg, *peticion;
+	static sqlite3_stmt * stmt;
+	sqlite3 * db = BB_DATA->db;
+    log_msg("    db_unlink(%s)\n",path);
+
+	// Probamos a eliminar una entrada con linkpath = path
+	sqlite3_prepare_v2(db,"DELETE fom links where linkpath = ?1", -1,&stmt,NULL);
+	sqlite3_bind_text(stmt,1,path,-1,SQLITE_STATIC);
+	rc = sqlite3_step(stmt);
+	if (rc != SQLITE_DONE) {
+		log_msg("      ERROR: %s\n", sqlite3_errmsg(db));
+	    return 0;
+	}
+    if (sqlite3_changes(db)==0) {
+    	//No había entrada con linkpath = path, modificamos todas las entradas.
+    	//Y borramos la que deja linkpath = originalpath
+    	sqlite3_prepare_v2(db,
+    			"UPDATE links SET "
+    				"originalpath = "
+    					"(select linkpath from links where originalpath = ?1 limit 1)"
+    				"WHERE originalpath = ?1 ;"
+    			"DELETE from links where linkpath = originalpath;", -1,&stmt,NULL);
+    	sqlite3_bind_text(stmt,1,path,-1,SQLITE_STATIC);
+    	rc = sqlite3_step(stmt);
+    	if (rc != SQLITE_DONE) {
+    		log_msg("      ERROR: %s\n", sqlite3_errmsg(db));
+    	    return 0;
+    	}
+    	if (sqlite3_changes(db)==0){
+    		return 0;
+    	}
+    }
+	return 1;
 }
 
 

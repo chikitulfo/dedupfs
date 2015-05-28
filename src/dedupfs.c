@@ -258,6 +258,70 @@ int bb_rmdir(const char *path)
     return retstat;
 }
 
+/** Create a hard link to a file */
+int bb_link(const char *path, const char *newpath)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX], fnewpath[PATH_MAX];
+
+    log_msg("\nbb_link(path=\"%s\", newpath=\"%s\")\n",
+	    path, newpath);
+    bb_fullpath(fpath, path);
+    bb_fullpath(fnewpath, newpath);
+
+    retstat = link(fpath, fnewpath);
+    if (retstat < 0)
+    	retstat = bb_error("bb_link link");
+    else // Se inserta en la tabla de enlaces
+    	db_addLink(path, newpath);
+
+    return retstat;
+}
+
+/** Remove a file */
+int bb_unlink(const char *path)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+
+
+    log_msg("bb_unlink(path=\"%s\")\n",
+	    path);
+
+    bb_fullpath(fpath, path);
+
+    retstat = unlink(fpath);
+    if (retstat < 0){
+    	retstat = bb_error("bb_unlink unlink");
+    }
+    else {
+        struct db_entry entradadb;
+        if (db_get(path, &entradadb)){
+        	char * heredero = malloc(PATH_MAX);
+        	// Si está en la tabla de enlaces, su entrada de la tabla de enlaces
+        	//  debe heredarla otro, y no se modifican los datos
+        	if (db_link_get_heredero(path, heredero)){
+        		db_link_heredar(path, heredero);
+        	} else {
+    			db_eliminar(path);
+    			// Si no está deduplicado se eliminan los datos
+        		if (entradadb.deduplicados == 0) {
+        			bb_fullpath(fpath,entradadb.datapath);
+        			unlink(fpath);
+        		} else { // Si está deduplicado se decrementa el contador
+        			db_decrementar_duplicados(entradadb.sha1sum);
+        		}
+        	}
+        	free(heredero);
+        } else {
+        	//Si no está en la tabla de
+            db_unlink(path);
+        }
+    }
+
+    return retstat;
+}
+
 /** Change the permission bits of a file */
 int bb_chmod(const char *path, mode_t mode)
 {
@@ -517,11 +581,11 @@ int bb_release(const char *path, struct fuse_file_info *fi)
     log_msg("\nbb_release(path=\"%s\", fi=0x%08x)\n",
     path, fi);
     log_fi(fi);
-    //Cerramos el archivo, y después vemos.
+    // Cerramos el archivo, y después vemos.
     retstat = close(fi->fh);
     // Obtenemos la información del mapa de ficheros abiertos en escritura
     if (map_extract(fi->fh, &entradamap, 1)  //Si está en el mapa
-    		&& entradamap.modificado		  //y ha sido modificado
+    		&& entradamap.modificado		 //y ha sido modificado
 			&& map_count(entradamap.path)<1){//y era el último abierto
     	unsigned int size;
     	struct db_entry entradadb;
@@ -529,6 +593,14 @@ int bb_release(const char *path, struct fuse_file_info *fi)
 		char truedatapath[PATH_MAX];
 
     	log_msg("    Abierto en escritura, modificado y último.\n");
+
+    	//Si es un archivo enlazado, path contiene la direccion del enlace,
+    	// mientras que la tabla de deduplicados está guardada con el path
+    	// del que se enlaza. Hay que cambiar eso.
+    	if ( db_getLinkPath(path, truepath)){
+    		//Se ha obtenido el path original.
+    		path = truepath;
+    	}
 
     	//Si se encuentra en la base de datos, el archivo no es nuevo
     	if( db_get(path,&entradadb)) {
@@ -975,6 +1047,7 @@ int bb_truncate(const char *path, off_t newsize)
     // Truncate puede verse como una apertura de archivo,
     // truncamiento hasta el tamaño adecuado (modificación),
     // y cierre con todas las implicaciones que tiene el cierre.
+    // Se usa bb_open, bb_ftruncate y bb_release para ello.
     struct fuse_file_info *fi = malloc(sizeof(struct fuse_file_info));
     fi->flags = O_RDWR; //Para acceder en escritura
     retstat = bb_open(path, fi);
@@ -1037,11 +1110,11 @@ struct fuse_operations bb_oper = {
   // .getdir = NULL,
   .mknod = bb_mknod,
   .mkdir = bb_mkdir,
-  // .unlink = bb_unlink,
   .rmdir = bb_rmdir,
   // .symlink = bb_symlink,
   // .rename = bb_rename,
-  // .link = bb_link,
+  .link = bb_link,
+  .unlink = bb_unlink,
   .chmod = bb_chmod,
   .chown = bb_chown,
   .truncate = bb_truncate,

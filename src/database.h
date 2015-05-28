@@ -18,6 +18,10 @@ void db_incrementar_duplicados(const char * hash);
 void db_decrementar_duplicados(const char * hash);
 int db_eliminar(const char * path);
 
+int db_addLink(const char * enlace, const char * pathoriginal);
+int db_getLinkPath(const char * enlace, char * pathoriginal);
+int db_unlink(const char * path);
+
 
 sqlite3 * map_open ();
 int map_close();
