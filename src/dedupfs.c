@@ -190,6 +190,39 @@ int bb_getattr(const char *path, struct stat *statbuf)
     return retstat;
 }
 
+/** Read the target of a symbolic link
+ *
+ * The buffer should be filled with a null terminated string.  The
+ * buffer size argument includes the space for the terminating
+ * null character.  If the linkname is too long to fit in the
+ * buffer, it should be truncated.  The return value should be 0
+ * for success.
+ */
+// Note the system readlink() will truncate and lose the terminating
+// null.  So, the size passed to to the system readlink() must be one
+// less than the size passed to bb_readlink()
+// bb_readlink() code by Bernardo F Costa (thanks!)
+int bb_readlink(const char *path, char *link, size_t size)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+
+    log_msg("bb_readlink(path=\"%s\", link=\"%s\", size=%d)\n",
+	  path, link, size);
+    bb_fullpath(fpath, path);
+
+    retstat = readlink(fpath, link, size - 1);
+    log_msg("    link: %s", link);
+    if (retstat < 0)
+	retstat = bb_error("bb_readlink readlink");
+    else  {
+	link[retstat] = '\0';
+	retstat = 0;
+    }
+
+    return retstat;
+}
+
 /** Create a file node
  *
  * There is no create() operation, mknod() will be called for
@@ -260,6 +293,27 @@ int bb_rmdir(const char *path)
     retstat = rmdir(fpath);
     if (retstat < 0)
 	retstat = bb_error("bb_rmdir rmdir");
+
+    return retstat;
+}
+
+/** Create a symbolic link */
+// The parameters here are a little bit confusing, but do correspond
+// to the symlink() system call.  The 'path' is where the link points,
+// while the 'link' is the link itself.  So we need to leave the path
+// unaltered, but insert the link into the mounted directory.
+int bb_symlink(const char *path, const char *link)
+{
+    int retstat = 0;
+    char flink[PATH_MAX];
+
+    log_msg("\nbb_symlink(path=\"%s\", link=\"%s\")\n",
+	    path, link);
+    bb_fullpath(flink, link);
+
+    retstat = symlink(path, flink);
+    if (retstat < 0)
+	retstat = bb_error("bb_symlink symlink");
 
     return retstat;
 }
@@ -1121,12 +1175,12 @@ int bb_fgetattr(const char *path, struct stat *statbuf, struct fuse_file_info *f
 
 struct fuse_operations bb_oper = {
   .getattr = bb_getattr,
-  // .readlink = bb_readlink,
+  .readlink = bb_readlink,
   // .getdir = NULL,
   .mknod = bb_mknod,
   .mkdir = bb_mkdir,
   .rmdir = bb_rmdir,
-  // .symlink = bb_symlink,
+  .symlink = bb_symlink,
   // .rename = bb_rename,
   .link = bb_link,
   .unlink = bb_unlink,
