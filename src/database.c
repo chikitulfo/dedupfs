@@ -35,12 +35,6 @@ sqlite3 * db_open (const char *path) {
     			"linkpath TEXT PRIMARY KEY ON CONFLICT FAIL,"
     			"originalpath TEXT NOT NULL ON CONFLICT FAIL"
     		");";
-    /*
-    CREATE TABLE IF NOT EXISTS links(
-    	linkpath TEXT PRIMARY KEY ON CONFLICT FAIL,
-    	originalpath TEXT NOT NULL ON CONFLICT FAIL
-	);
-     */
     rc = sqlite3_exec(db, peticion, /*callback*/NULL, 0, &dbErrMsg);
     if( rc!=SQLITE_OK ){
     	log_msg("      Error accediendo a la base de datos\n"
@@ -206,24 +200,22 @@ int db_addLink(const char * pathoriginal, const char * enlace){
 	int rc, retval=1;
 	static sqlite3_stmt * stmt;
 	sqlite3 * db = BB_DATA->db;
-	char * desreferenciado = malloc(PATH_MAX);
+	char * desreferenciado = strdup(pathoriginal);
 	char * desreferenciar = strdup(pathoriginal);
 	char * auxptr;
-	//Desreferenciamos
+	//Desreferenciamos el pathoriginal en caso de que sea necesario.
 	log_msg("    db_addlink(%s, %s)\n", pathoriginal, enlace);
 	while(db_getLinkPath(desreferenciar,desreferenciado)) {
 		auxptr = desreferenciado;
 		desreferenciado = desreferenciar;
 		desreferenciar = auxptr;
+		log_msg("        derp\n");
 	}
 
-	int rc;
-	static sqlite3_stmt * stmt;
-	sqlite3 * db = BB_DATA->db;
 	sqlite3_prepare_v2(db,"INSERT INTO links VALUES ( ?1, ?2)", -1,&stmt,NULL);
-	log_msg("      desreferenciado: %s\n", desreferenciado);
+	log_msg("      desreferenciado: %s\n", desreferenciar);
 	sqlite3_bind_text(stmt,1,enlace,-1,SQLITE_STATIC);
-	sqlite3_bind_text(stmt,2,desreferenciado,-1,SQLITE_STATIC);
+	sqlite3_bind_text(stmt,2,desreferenciar,-1,SQLITE_STATIC);
 
 	rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
@@ -265,12 +257,11 @@ int db_getLinkPath(const char * enlace, char * pathoriginal) {
 }
 
 /*
- * Elimina el enlace indicado por path. Si path contiene el archivo original,
- * se sustituye pathoriginal por el de la primera entrada.
+ * Elimina el enlace indicado por path.
+ * Devuelve true si se ha eliminado, false en caso contrario.
  */
 int db_unlink(const char * path) {
 	int rc;
-	char *dbErrMsg, *peticion;
 	static sqlite3_stmt * stmt;
 	sqlite3 * db = BB_DATA->db;
     log_msg("    db_unlink(%s)\n",path);
@@ -284,24 +275,69 @@ int db_unlink(const char * path) {
 	    return 0;
 	}
     if (sqlite3_changes(db)==0) {
-    	//No había entrada con linkpath = path, modificamos todas las entradas.
-    	//Y borramos la que deja linkpath = originalpath
-    	sqlite3_prepare_v2(db,
-    			"UPDATE links SET "
-    				"originalpath = "
-    					"(select linkpath from links where originalpath = ?1 limit 1)"
-    				"WHERE originalpath = ?1 ;"
-    			"DELETE from links where linkpath = originalpath;", -1,&stmt,NULL);
-    	sqlite3_bind_text(stmt,1,path,-1,SQLITE_STATIC);
-    	rc = sqlite3_step(stmt);
-    	if (rc != SQLITE_DONE) {
-    		log_msg("      ERROR: %s\n", sqlite3_errmsg(db));
-    	    return 0;
-    	}
-    	if (sqlite3_changes(db)==0){
-    		return 0;
-    	}
+    	return 0;
     }
+	return 1;
+}
+
+/**
+ * Busca en la tabla de enlaces uno que haga referencia a path y lo devuelve
+ * en heredero. Se utiliza cuando es necesario eliminar la referencia de la
+ * tabla de archivos, y hay que mirar si hay un heredero.
+ * Devuelve true si ha encontrado heredero, y false en caso contrario
+ */
+int db_link_get_heredero(const char * path, char *heredero){
+	static sqlite3_stmt *stmt;
+	sqlite3 * db = BB_DATA->db;
+	int rc,found=0;
+
+	sqlite3_prepare_v2(db,"select linkpath from links where originalpath = ?1 limit 1", -1,&stmt,NULL);
+	sqlite3_bind_text(stmt,1,path,-1,SQLITE_STATIC);
+	log_msg("    db_linkget_heredero(%s)\n", path);
+	rc = sqlite3_step(stmt);
+	log_msg("      rc_code= %d\n", rc);
+	if (rc == SQLITE_ROW) {//Devuelve una fila. recuperamos los valores
+		strcpy (heredero, (char *)sqlite3_column_text(stmt,0));
+		log_msg("      Encontrada: %s, %s\n", path, heredero);
+		found=1;
+	}
+	else if (rc != SQLITE_DONE) {
+		log_msg("       ERROR recuperando: %s\n", sqlite3_errmsg(db));
+	}
+	sqlite3_finalize(stmt);
+	return found;
+}
+
+/**
+ * Modifica todas las referencias que apunten a path en la tabla de enlaces,
+ * y las sustituye por heredero.
+ * Modifica la referencia con 'path' == path en la tabla de ficheros, en caso
+ * de haberla.
+ * Devuelve true si se han realizado cambios, false si no.
+ */
+int db_link_heredar(const char *path, const char *heredero){
+	int rc, cambios=0;
+	sqlite3 * db = BB_DATA->db;
+    log_msg("    db_link_heredar(%s, %s); ",path, heredero);
+    //Se modifican las referencias a path por heredero, y se elimina en caso de
+    // que haya una tras la modificación que se referencie a sí misma.
+    char *dbErrMsg=0, *peticion;
+    asprintf(&peticion,"UPDATE files SET path = '%s' WHERE path = '%s' ;"
+			"UPDATE links SET originalpath = '%s' WHERE originalpath = '%s' ;"
+			"DELETE from links where linkpath = originalpath;",
+    		heredero,path,heredero,path);
+    rc = sqlite3_exec(db, peticion, /*callback*/NULL, 0, &dbErrMsg);
+    free(peticion);
+	cambios += sqlite3_changes(db);
+    if( rc!=SQLITE_OK ){
+    	log_msg("      Error accediendo a la base de datos: %s\n", dbErrMsg);
+    	sqlite3_free(dbErrMsg);
+    	abort();
+    }
+	log_msg("cambios: %d", cambios);
+	if ( cambios==0){
+		return 0;
+	}
 	return 1;
 }
 

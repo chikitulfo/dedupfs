@@ -21,7 +21,8 @@ int db_eliminar(const char * path);
 int db_addLink(const char * enlace, const char * pathoriginal);
 int db_getLinkPath(const char * enlace, char * pathoriginal);
 int db_unlink(const char * path);
-
+int db_link_get_heredero(const char * path, char *heredero);
+int db_link_heredar(const char *path, const char *heredero);
 
 sqlite3 * map_open ();
 int map_close();

@@ -86,7 +86,7 @@ static void calcular_hash(const char * path, char * outHashString, unsigned int 
  */
 static void preparar_datapath(char * hash, char * datapath) {
 	int rv;
-	log_msg("    preparar_datapath(%s)\n",datapath);
+	log_msg("    preparar_datapath(%s)\n",hash);
 
 	sprintf(datapath, "%s/.dedupfs/data/%c/", BB_DATA->rootdir, hash[0]);
 	rv = mkdir(datapath, 0777); 	//Intentamos crear X, y asumimos el error EEXIST
@@ -172,6 +172,12 @@ int bb_getattr(const char *path, struct stat *statbuf)
     if (retstat != 0)
     	retstat = bb_error("bb_getattr lstat");
     
+    // Desreferenciamos path si es un enlace duro
+    if(db_getLinkPath(path, fpath)) {
+    	//Si es true se ha desreferenciado y guardado en fpath.
+    	//Cambiamos el puntero de path a fpath
+    	path=fpath;
+    }
     //Si el archivo está en la bd, el tamaño se toma de ahí
     if( db_get(path,&entradabd)){
     	statbuf->st_size = entradabd.size;
@@ -314,7 +320,8 @@ int bb_unlink(const char *path)
         	}
         	free(heredero);
         } else {
-        	//Si no está en la tabla de
+        	//Si no está en la tabla de datos, se elimina de la de enlaces
+        	// puesto que puede estar como enlace
             db_unlink(path);
         }
     }
@@ -388,7 +395,7 @@ int bb_utime(const char *path, struct utimbuf *ubuf)
 int bb_open(const char *path, struct fuse_file_info *fi)
 {
     int fd;
-    char fpath[PATH_MAX];
+    char fpath[PATH_MAX], dereferecedp[PATH_MAX];
     struct db_entry entradadb;
     int retstat = 0;
     char escritura = 0;
@@ -399,7 +406,13 @@ int bb_open(const char *path, struct fuse_file_info *fi)
     if ((fi->flags&O_RDWR) == O_RDWR || (fi->flags&O_WRONLY) == O_WRONLY){
     	escritura = 1;
     }
-    //Obtener auténtico path
+
+    //Obtener auténtico path de datos si es un enlace.
+	if ( db_getLinkPath(path, dereferecedp)){
+		//Se ha obtenido el path original.
+		path = dereferecedp;
+	}
+
     if (db_get(path, &entradadb)) {
     	bb_fullpath(fpath, entradadb.datapath);
     	//Si está deduplicado y va a escribirse, hay que usar una copia.
@@ -591,15 +604,17 @@ int bb_release(const char *path, struct fuse_file_info *fi)
     	struct db_entry entradadb;
     	char truepath[PATH_MAX];
 		char truedatapath[PATH_MAX];
+		char dereferencedpath[PATH_MAX];
 
     	log_msg("    Abierto en escritura, modificado y último.\n");
 
     	//Si es un archivo enlazado, path contiene la direccion del enlace,
     	// mientras que la tabla de deduplicados está guardada con el path
     	// del que se enlaza. Hay que cambiar eso.
-    	if ( db_getLinkPath(path, truepath)){
+
+    	if ( db_getLinkPath(path, dereferencedpath)){
     		//Se ha obtenido el path original.
-    		path = truepath;
+    		path = dereferencedpath;
     	}
 
     	//Si se encuentra en la base de datos, el archivo no es nuevo
