@@ -1,0 +1,98 @@
+%%Packages and settings I use in most documents.
+\usepackage[spanish]{babel}
+\usepackage{ucs}
+\usepackage[utf8x]{inputenc}
+%\usepackage[T1]{fontenc} %Produce una salida llena de caracteres raros
+\usepackage{xcolor}
+\usepackage{fancyvrb}
+
+\usepackage[section]{placeins}
+
+\usepackage{amsmath,amsfonts}
+\usepackage{graphicx}
+\usepackage[space]{grffile} %% Para incluir archivos con espacios
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=false,
+    citecolor=black,
+    filecolor=black,
+    linkcolor=black,
+    urlcolor=black,
+    linkbordercolor=gray
+}
+\usepackage[all]{hypcap}    %for going to the top of an image when a figure reference is clicked
+
+\usepackage{fancyhdr} 					%%Para encabezados
+
+\usepackage{parcolumns}
+\usepackage{listings}
+\lstset{
+  literate={ö}{{\"o}}1
+           {ä}{{\"a}}1
+           {ü}{{\"u}}1
+           {á}{{\'a}}1
+           {Á}{{\'A}}1
+           {é}{{\'e}}1
+           {É}{{\'E}}1
+           {í}{{\'i}}1
+           {Í}{{\'I}}1
+           {ó}{{\'o}}1
+           {Ó}{{\'O}}1
+           {ú}{{\'u}}1
+           {Ú}{{\'U}}1
+           {ñ}{{\~{n}}}1
+           {Ñ}{{\~{N}}}1
+           {ç}{{\c{c}}}1
+           {Ç}{{\c{C}}}1
+}
+\usepackage{tcolorbox} %%para utilizar cajas que no se quedan abiertas en los listings
+\tcbuselibrary{listings,skins,breakable}
+\newtcblisting{mycode}{
+      arc=0mm,
+      top=0mm,
+      bottom=0mm,
+      left=3mm,
+      right=0mm,
+      width=\textwidth,
+      boxrule=1pt,
+      colback=blue!20,
+      listing only,
+      listing options={style=mystyle},
+      breakable
+}
+
+\textheight=22.94cm \textwidth=17cm \topmargin=-1cm
+\oddsidemargin=-0.4cm
+\parindent=1.0cm
+
+%Para permitir figuras más a menudo:
+\renewcommand{\topfraction}{.85}
+\renewcommand{\bottomfraction}{.7}
+\renewcommand{\textfraction}{.15}
+\renewcommand{\floatpagefraction}{.66}
+\renewcommand{\dbltopfraction}{.66}
+\renewcommand{\dblfloatpagefraction}{.66}
+\setcounter{topnumber}{9}
+\setcounter{bottomnumber}{9}
+\setcounter{totalnumber}{20}
+\setcounter{dbltopnumber}{9}
+
+\setlength{\parskip}{\baselineskip} %Esto se utiliza para echarle cuenta a los intros
+
+\newcommand{\encabezados}[2]{
+  \pagestyle{fancy}
+  \renewcommand{\headrulewidth}{0.4pt}
+  \renewcommand{\footrulewidth}{0.0pt}
+  \fancyhf{}
+  \fancyhead[LO]{\leftmark}
+  \fancyhead[RE]{\rightmark}
+  \fancyhead[CE]{}
+  \fancyhead[RO]{#1}
+  \fancyfoot[RO]{\thepage}
+  \fancyfoot[LO]{#2}
+}
+
+% Para guardar el número de un enumerate y continuar después
+% \newcounter{saveenumi}
+% \newcommand{\savecounteri}{\setcounter{saveenumi}{\value{enumi}}}
+% \newcommand{\restorecounteri}{\setcounter{enumi}{\value{saveenumi}}}

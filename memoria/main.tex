@@ -1,0 +1,75 @@
+\documentclass[12pt,a4paper]{article}
+
+\include{header}
+\include{portada}
+
+
+\begin{document}
+\portada{Diseño y Estructura Interna de un SO}{Juan Piernas, Diego Sevilla}{5º de Ingeniería Informática}{DEDUPFS\\\vspace{0.4cm} Sistema de ficheros con deduplicación basado en FUSE}{Convocatoria de Junio, curso 2014-2015}
+
+\tableofcontents
+\newpage
+\section{Resumen del trabajo realizado}
+
+El objetivo de este proyecto de programación práctico ha sido desarrollar un sistema de ficheros capaz de detectar cuándo se almacenan ficheros idénticos, y dejar solo una copia de los datos en el sistema de ficheros, haciendo que el resto de ficheros sean simples apuntadores a la copia que contiene los datos. Esto permite que, en sistemas de ficheros donde hay muchos ficheros iguales, se ahorre una cantidad importante de espacio en disco.
+
+Esta deduplicación de ficheros idénticos, se hace de forma transparente al usuario del sistema de ficheros, por lo que se siguen viendo ambos archivos como archivos diferentes, y en caso de modificarse uno de ellos, se volverán a separar y quedarán como dos ficheros diferentes. El usuario no llega a percibir estos cambios, y él utiliza su sistema de ficheros de forma normal, pero se ahorra espacio si tiene muchos archivos iguales.
+Para detectar si dos ficheros son idénticos, se ha utilizado la función SHA1 para calcular la clave de dispersión del archivo. Con esta clave se almacenan los datos en un directorio del sf, con un fichero que tiene como nombre el código hexadecimal del hash, y se deja el fichero original vacío como un marcador. En una base de datos interna, se almacenan una relación de cada nombre de fichero y qué clave de dispersión le corresponde, además de algunos parámetros adicionales que se indican más adelante. Esto permite saber dónde se encuentran realmente los datos de cada fichero, y se pueden mover fácilmente de un lugar a otro cuando se modifican y se recalcula su clave de dispersión.
+
+El cálculo de la clave de dispersión es algo costoso, puesto que implica leer el fichero completo, y realizar cálculos sobre los datos del fichero para obtener la clave. Debido a esto, es necesario buscar el momento más adecuado para calcular la clave y evitar un impacto considerable sobre la velocidad del sistema de ficheros. Este momento adecuado se produce cuando un archivo ha sido abierto para escribir en él por uno o más procesos, se ha escrito en él, y lo cierra el último de los procesos que lo tenía abierto. Entonces se recalcula la clave de dispersión y, si ésta ha cambiado, se mueven los datos al fichero que corresponda a esa clave.
+
+Además del deduplicado de archivos, también es necesario asegurarse de que otro tipo de funcionalidades típicas de un SF en UNIX están correctamente implementadas. Para asegurar que el funcionamiento de los enlaces físicos permanece intacto en nuestro SF, se ha utilizado una tabla adicional en la base de datos que almacena para cada enlace, cuál es el archivo que posee los contenidos. En cuanto a los enlaces simbólicos, no es necesario llevar a cabo ninguna acción especial para que funcionen de forma normal.
+
+Por último, los permisos y el resto de atributos que tiene un archivo, se almacenan en el archivo vacío que se deja de marcador, a excepción del tamaño de archivo, que también se almacena en la base de datos junto a cada archivo para facilitar el acceso posterior a esta información.
+
+\newpage
+\section{Glosario de conceptos}
+
+\newpage
+\section{Descripción del sistema de ficheros}
+
+\newpage
+\section{Manual de uso}
+
+\newpage
+\section{Pruebas del sistema de ficheros}
+
+\newpage
+\section{Anexo: Listado del código fuente}
+
+\iffalse 
+\begin{figure}[h!]
+  \centering
+  \label{fig:supervisiontree}
+  \includegraphics[width=.95\linewidth]{supervisiontree}
+  \caption{Árbol de supervisión}
+\end{figure}
+\fi
+
+
+\iffalse
+\lstdefinestyle{mystyle}{language=Pascal,
+  breakatwhitespace=false,
+  breaklines=true,
+  basicstyle=\footnotesize
+}
+\begin{mycode}
+1> application:start(otpapp).
+Iniciado supervisor s1
+Iniciado supervisor s2
+Iniciado worker w2A 
+Iniciado worker w2B 
+Iniciado supervisor s3
+Iniciado worker w3A 
+Iniciado supervisor s5
+Iniciado worker w5A 
+Iniciado worker w5B 
+Iniciado worker w5C 
+Iniciado supervisor s4
+Iniciado worker w4A 
+Iniciado worker w4B 
+ok
+\end{mycode}
+\fi
+
+\end{document}

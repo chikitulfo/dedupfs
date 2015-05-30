@@ -1,0 +1,35 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Definición de la Portada %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%PARÁMETROS
+%%1: Nombre de la Asignatura
+%%2: Nombre del Profesor
+%%3: Curso
+%%4: Título
+%%5: Subtítulo
+\newcommand{\portada}[5]{
+\begin{titlepage}
+  \begin{tabular}{l}
+    \sc Universidad de Murcia \\
+    \sc Facultad de Informática \\
+	\sc #1\\
+	\sc #2\\
+	\sc #3
+  \vspace*{1.9cm}\mbox{}
+  \end{tabular}
+  \bigskip
+
+  \vspace*{0.5 cm}
+  \begin{center}
+  \textbf{\Huge #4 } \\ [1.0cm]
+  \textbf{\Large #5}\\
+  \end{center}
+  \vspace*{9 cm}
+  \begin{flushright}
+    \begin{tabular}{ll}
+		Juan José Andreu Blázquez\\ $<$juanjose.andreu@um.es$>$ \\
+         \today \\
+    \end{tabular}
+  \end{flushright}
+\end{titlepage}
+}
