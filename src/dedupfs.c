@@ -318,6 +318,29 @@ int bb_symlink(const char *path, const char *link)
     return retstat;
 }
 
+/** Rename a file */
+// both path and newpath are fs-relative
+int bb_rename(const char *path, const char *newpath)
+{
+    int retstat = 0;
+    char fpath[PATH_MAX];
+    char fnewpath[PATH_MAX];
+
+    log_msg("\nbb_rename(fpath=\"%s\", newpath=\"%s\")\n",
+	    path, newpath);
+    bb_fullpath(fpath, path);
+    bb_fullpath(fnewpath, newpath);
+
+    retstat = rename(fpath, fnewpath);
+    if (retstat < 0)
+    	retstat = bb_error("bb_rename rename");
+    else {
+    	//Si se renombra con éxito, cambiar en la base de datos
+    	db_rename(path, newpath);
+    }
+    return retstat;
+}
+
 /** Create a hard link to a file */
 int bb_link(const char *path, const char *newpath)
 {
@@ -963,6 +986,26 @@ int bb_releasedir(const char *path, struct fuse_file_info *fi)
     return retstat;
 }
 
+/** Synchronize directory contents
+ *
+ * If the datasync parameter is non-zero, then only the user data
+ * should be flushed, not the meta data
+ *
+ * Introduced in version 2.3
+ */
+// when exactly is this called?  when a user calls fsync and it
+// happens to be a directory? ???
+int bb_fsyncdir(const char *path, int datasync, struct fuse_file_info *fi)
+{
+    int retstat = 0;
+
+    log_msg("\nbb_fsyncdir(path=\"%s\", datasync=%d, fi=0x%08x)\n",
+	    path, datasync, fi);
+    log_fi(fi);
+
+    return retstat;
+}
+
 /**
  * Initialize filesystem
  *
@@ -1156,17 +1199,32 @@ int bb_truncate(const char *path, off_t newsize)
 int bb_fgetattr(const char *path, struct stat *statbuf, struct fuse_file_info *fi)
 {
     int retstat = 0;
-    
+    struct db_entry entradabd;
+    char fpath[PATH_MAX];
     log_msg("\nbb_fgetattr(path=\"%s\", statbuf=0x%08x, fi=0x%08x)\n",
       path, statbuf, fi);
     log_fi(fi);
     
     //Ahora mismo recibimos el stat del deduplicado.
-    //Se puede solucionar llamando a getattr desde aquí
-
+    //Se llama a getattr desde aquí, y se evita
     retstat = fstat(fi->fh, statbuf);
-    if (retstat < 0)
+    if (retstat < 0) {
     	retstat = bb_error("bb_fgetattr fstat");
+    	return retstat;
+    }
+    // Desreferenciamos path si es un enlace duro
+    if(db_getLinkPath(path, fpath)) {
+    	//Si es true se ha desreferenciado y guardado en fpath.
+    	//Cambiamos el puntero de path a fpath
+    	path=fpath;
+    }
+    //Si el archivo está en la bd, el tamaño se toma de ahí
+    if( db_get(path,&entradabd)){
+    	statbuf->st_size = entradabd.size;
+    	//Necesario incluir st_blocks? Lo incluimos
+    	//damos por supuesto tamaño de bloque de 4096
+    	statbuf->st_blocks = (entradabd.size / 4096 + (entradabd.size % 4096 > 0))*8;
+    }
     
     log_stat(statbuf);
     
@@ -1181,7 +1239,7 @@ struct fuse_operations bb_oper = {
   .mkdir = bb_mkdir,
   .rmdir = bb_rmdir,
   .symlink = bb_symlink,
-  // .rename = bb_rename,
+  .rename = bb_rename,
   .link = bb_link,
   .unlink = bb_unlink,
   .chmod = bb_chmod,
@@ -1202,7 +1260,7 @@ struct fuse_operations bb_oper = {
   .opendir = bb_opendir,
   .readdir = bb_readdir,
   .releasedir = bb_releasedir,
-  // .fsyncdir = bb_fsyncdir,
+  .fsyncdir = bb_fsyncdir,
   .init = bb_init,
   .destroy = bb_destroy,
   .access = bb_access,

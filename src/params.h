@@ -11,6 +11,9 @@
 #ifndef _PARAMS_H_
 #define _PARAMS_H_
 
+
+//No utilizar el log
+#define NOLOG
 // The FUSE API has been changed a number of times.  So, our code
 // needs to define the version of the API that we assume.  As of this
 // writing, the most current API version is 26

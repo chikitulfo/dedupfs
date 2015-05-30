@@ -15,7 +15,10 @@
 
 FILE *log_open(char path[PATH_MAX])
 {
-    FILE *logfile;
+#ifdef NOLOG
+	return NULL;
+#endif
+	FILE *logfile;
     
     // very first thing, open up the logfile and mark that we got in
     // here.  If we can't open the logfile, we're dead.
@@ -33,7 +36,10 @@ FILE *log_open(char path[PATH_MAX])
 
 void log_msg(const char *format, ...)
 {
-    va_list ap;
+#ifdef NOLOG
+	return ;
+#endif
+	va_list ap;
     va_start(ap, format);
 
     vfprintf(BB_DATA->logfile, format, ap);
@@ -45,7 +51,10 @@ void log_msg(const char *format, ...)
 // Duplicated here for convenience.
 void log_fi (struct fuse_file_info *fi)
 {
-    /** Open flags.  Available in open() and release() */
+#ifdef NOLOG
+	return ;
+#endif
+	/** Open flags.  Available in open() and release() */
     //	int flags;
 	log_struct(fi, flags, 0x%08x, );
 	
@@ -85,7 +94,10 @@ void log_fi (struct fuse_file_info *fi)
 // <bits/stat.h>; this is indirectly included from <fcntl.h>
 void log_stat(struct stat *si)
 {
-    //  dev_t     st_dev;     /* ID of device containing file */
+#ifdef NOLOG
+	return ;
+#endif
+	//  dev_t     st_dev;     /* ID of device containing file */
 	log_struct(si, st_dev, %lld, );
 	
     //  ino_t     st_ino;     /* inode number */
@@ -128,7 +140,10 @@ void log_stat(struct stat *si)
 
 void log_statvfs(struct statvfs *sv)
 {
-    //  unsigned long  f_bsize;    /* file system block size */
+#ifdef NOLOG
+	return ;
+#endif
+	//  unsigned long  f_bsize;    /* file system block size */
 	log_struct(sv, f_bsize, %ld, );
 	
     //  unsigned long  f_frsize;   /* fragment size */
@@ -165,6 +180,9 @@ void log_statvfs(struct statvfs *sv)
 
 void log_utime(struct utimbuf *buf)
 {
+#ifdef NOLOG
+	return ;
+#endif
 	//    time_t actime;
 	log_struct(buf, actime, 0x%08lx, );
 	

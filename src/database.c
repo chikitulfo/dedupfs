@@ -332,13 +332,38 @@ int db_link_heredar(const char *path, const char *heredero){
     if( rc!=SQLITE_OK ){
     	log_msg("      Error accediendo a la base de datos: %s\n", dbErrMsg);
     	sqlite3_free(dbErrMsg);
-    	abort();
     }
 	log_msg("cambios: %d", cambios);
 	if ( cambios==0){
 		return 0;
 	}
 	return 1;
+}
+
+/**
+ * Renombra todas las referencias de path a newpath en ambas tablas
+ * de la base de datos
+ */
+void db_rename(const char *path, const char *newpath){
+	int rc, cambios=0;
+	sqlite3 * db = BB_DATA->db;
+    log_msg("    db_rename(%s, %s); ",path, newpath);
+    //Se modifican las referencias a path por newpath en las tablas.
+    char *dbErrMsg=0, *peticion;
+    asprintf(&peticion,"UPDATE files SET path = '%s' WHERE path = '%s' ;"
+			"UPDATE links SET originalpath = '%s' WHERE originalpath = '%s' ;"
+			"UPDATE links SET linkpath = '%s' WHERE linkpath = '%s';",
+    		newpath,path,
+			newpath,path,
+			newpath,path);
+    rc = sqlite3_exec(db, peticion, /*callback*/NULL, 0, &dbErrMsg);
+    free(peticion);
+	cambios += sqlite3_changes(db);
+    if( rc!=SQLITE_OK ){
+    	log_msg("      Error accediendo a la base de datos: %s\n", dbErrMsg);
+    	sqlite3_free(dbErrMsg);
+    }
+	log_msg("cambios: %d", cambios);
 }
 
 
