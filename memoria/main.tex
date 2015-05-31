@@ -25,14 +25,44 @@ Por último, los permisos y el resto de atributos que tiene un archivo, se almac
 \newpage
 \section{Glosario de conceptos}
 
+A lo largo de esta memoria explicativa del desarrollo de la práctica propuesta, se utilizan una serie de términos cuyo significado se explica a continuación:
+\begin{itemize}
+ \item \textbf{Hash/Clave de dispersión}: Clave de 20 bytes generada a partir de un archivo mediante la función criptográfica SHA1 y que se utiliza como identificador del contenido de un archivo.
+ \item \textbf{Deduplicar/deduplicado}: Cuando se habla de deduplicar un archivo, o de uno deduplicado, se hace referencia a la acción de coger dos archivos idénticos que están duplicados en el sf, y dejar solo uno conteniendo los datos.
+ \item \textbf{Marcador}: Un marcador es el archivo vacío con el nombre original que se deja en el lugar donde se creó un fichero en primer lugar.
+ \item \textbf{Archivo de datos}: Archivo que se crea en una carpeta oculta del sistema de ficheros y que contiene los datos a los que apuntan los marcadores. Su nombre se corresponde con el hash generado por los datos contenidos en él.
+ \item \textbf{Reduplicar}: Este término se refiere a un archivo que se vuelve a duplicar cuando estaba deduplicado, porque sus contenidos han cambiado.
+\end{itemize}
+
+
 \newpage
 \section{Descripción del sistema de ficheros}
+
+\subsection{Funcionamiento y estructura general}
+
+El diseño e implementación del sistema de ficheros \emph{Dedupfs} se ha llevado a cabo teniendo en cuenta desde el primer momento cuáles eran los principales retos a tener en cuenta para lograr la deduplicación totalmente transparente al usuario.
+\begin{itemize}
+ \item Es necesario conocer qué ficheros están deduplicados y cuáles no, y dónde se encuentran sus datos, para ello se utiliza una base de datos sqlite que se almacena en la dirección \texttt{\small .dedupfs/dedupfs.db}.
+ \item Es necesario que los archivos deduplicados permanezcan independientes de cara al usuario del sistema de ficheros, y que los camios producidos en uno de ellos no se propaguen a otros. Además, sus permisos, tiempos de modificación, y otros atributos, deben permanecer independientes. Por este motivo se ha optado por dejar un marcador vacío en el lugar de cada archivo, donde se conservan sus permisos y otros atributos, y almacenar los datos en una subcarpeta del directorio \texttt{\small .dedupfs/data} con el hash de los datos como nombre de archivo.
+ \item Los enlaces físicos sirven para designar al mismo fichero con diferentes nombres desde el punto de vista del usuario. Es necesario tratarlo de la forma adecuada, y evita tratar enlaces físicos como si fueran archivos deduplicados. Para ello se ha creado una segunda tabla en la base de datos, que contabiliza estos enlaces y permite gestionar los archivos.
+ \item Para evitar realizar el cálculo de hash cuando un archivo todavía puede ser modificado, lo más adecuado es hacerlo solamente cuando un fichero haya sido modificado, y deja de ser utilizado. Para ello se almacena en memoria un mapa de archivos abiertos para escritura, se marca si son modificados, y se computa su hash cuando los cierra el último proceso que los tenga abiertos.
+\end{itemize}
+
+Todo lo anterior se ha implementado modificando las funciones principales del ejemplo \texttt{\small bbfs.c}, copiándolas en otro llamado \texttt{\small dedupfs.c}, y añadiendo algunas nuevas.
+
+También, se ha incluido un módulo llamado \texttt{\small database} que se encarga de gestionar toda la comunicación del módulo principal con las distintas tablas de la base de datos y con el mapa de ficheros abiertos (que también ha sido implementado como una base de datos sqlite en memoria).
+
+
 
 \newpage
 \section{Manual de uso}
 
 \newpage
 \section{Pruebas del sistema de ficheros}
+
+%% Linux kernel sources 4.0.4
+% rootdir: 97609 archivos. du: 675M
+% nondeup: 48948 archivos. du: 648M
 
 \newpage
 \section{Anexo: Listado del código fuente}
