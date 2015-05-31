@@ -480,6 +480,20 @@ int bb_open(const char *path, struct fuse_file_info *fi)
     log_msg("\nbb_open(path\"%s\", fi=0x%08x)\n",
 	    path, fi);
 
+    //Comprobamos si se puede abrir el marcador
+    bb_fullpath(fpath,path);
+    fd=open(fpath, fi->flags);
+    if( fd == -1){
+    	//No se abre.
+    	retstat = bb_error("bb_open open");
+    	return retstat;
+    } else {
+    	//Se ha abierto adecuadamente, continuamos
+    	close(fd);
+    	fd=0;
+    	retstat=0;
+    }
+
     if ((fi->flags&O_RDWR) == O_RDWR || (fi->flags&O_WRONLY) == O_WRONLY){
     	escritura = 1;
     }
@@ -673,6 +687,11 @@ int bb_release(const char *path, struct fuse_file_info *fi)
     log_fi(fi);
     // Cerramos el archivo, y después vemos.
     retstat = close(fi->fh);
+    //Establecemos el tiempo de modificación en el marcador
+    char *fpath = malloc(PATH_MAX);
+    bb_fullpath(fpath, path);
+    utime(fpath, NULL);
+    free(fpath);
     // Obtenemos la información del mapa de ficheros abiertos en escritura
     if (map_extract(fi->fh, &entradamap, 1)  //Si está en el mapa
     		&& entradamap.modificado		 //y ha sido modificado
