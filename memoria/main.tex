@@ -5,7 +5,7 @@
 
 
 \begin{document}
-\portada{Diseño y Estructura Interna de un SO}{Juan Piernas, Diego Sevilla}{5º de Ingeniería Informática}{DEDUPFS\\\vspace{0.4cm} Sistema de ficheros con deduplicación basado en FUSE}{Convocatoria de Junio, curso 2014-2015}
+\portada{Diseño y Estructura Interna de un SO}{Juan Piernas, Diego Sevilla}{5º de Ingeniería Informática}{Dedupfs\\\vspace{0.4cm} Sistema de ficheros con deduplicación basado en FUSE}{Convocatoria de Junio, curso 2014-2015}
 
 \tableofcontents
 \newpage
@@ -32,13 +32,13 @@ A lo largo de esta memoria explicativa del desarrollo de la práctica propuesta,
  \item \textbf{Marcador}: Un marcador es el archivo vacío con el nombre original que se deja en el lugar donde se creó un fichero en primer lugar.
  \item \textbf{Archivo de datos}: Archivo que se crea en una carpeta oculta del sistema de ficheros y que contiene los datos a los que apuntan los marcadores. Su nombre se corresponde con el hash generado por los datos contenidos en él.
  \item \textbf{Reduplicar}: Este término se refiere a un archivo que se vuelve a duplicar cuando estaba deduplicado, porque sus contenidos han cambiado.
+ \item \textbf{Punto de montaje}: Es el punto del árbol de ficheros en el que se monta el sistema de ficheros dedupfs, y desde donde se interactúa con él. En este directorio no se almacena información, si no que sirve de lugar de acceso a los datos.
+ \item \textbf{Directorio subyacente/raíz}: Corresponde con el subárbol de ficheros donde se almacenan realmente los datos del sistema de ficheros dedupfs. Si se accede a los datos a través de este directorio, en puesto de a través del punto de montaje, sólo se verán los marcadores vacíos, y no se podrá acceder a sus datos.
 \end{itemize}
 
 
 \newpage
 \section{Descripción del sistema de ficheros}
-
-\subsection{Funcionamiento y estructura general}
 
 El diseño e implementación del sistema de ficheros \emph{Dedupfs} se ha llevado a cabo teniendo en cuenta desde el primer momento cuáles eran los principales retos a tener en cuenta para lograr la deduplicación totalmente transparente al usuario.
 \begin{itemize}
@@ -52,6 +52,52 @@ Todo lo anterior se ha implementado modificando las funciones principales del ej
 
 También, se ha incluido un módulo llamado \texttt{\small database} que se encarga de gestionar toda la comunicación del módulo principal con las distintas tablas de la base de datos y con el mapa de ficheros abiertos (que también ha sido implementado como una base de datos sqlite en memoria).
 
+\subsection{Estructuras de datos}
+
+Como se ha indicado en el apartado anterior, las estructuras de datos utilizadas en el proyecto se han basado en bases de datos sqlite3, tanto para el almacenamiento de la información de archivos deduplicados y sus hashes, como para el mapa de archivos abiertos en memoria. Incluyendo también los enlaces físicos.
+
+\begin{itemize}
+ \item \textbf{Base de datos de archivos}: La base de datos de archivos está formada por dos tablas, y se almacena en \texttt{\small .dedupfs/dedupfs.db} dentro del directorio subyacente. La primera tabla, la tabla de archivos \emph{(files)}, contiene una entrada por cada archivo de datos almacenado en nuestro SF. En dicha entrada se almacena la siguiente información:
+  \begin{itemize}
+    \item Path: El path del archivo lógico. Que se dejará como marcador.
+    \item Shasum: El hash SHA1 de los datos del archivo, almacenado en texto con representación hexadecimal.
+    \item Datapath: El path donde se almacenan físicamente los datos del archivo en el SF.
+    \item Size: El tamaño en bytes del archivo, para acceder a esta información cómodamente, puesto que no está disponible en le marcador.
+    \item Deduplicados: La cuenta de veces que están deduplicados los datos del archivo, empieza en 0 para archivos no deduplicados.
+  \end{itemize}
+  Con esta información se pueden realizar fácilmente todas las operaciones necesarias para deduplicar y reduplicar los archivos, y saber en qué estado está cada uno en cada momento.\\
+  
+  En esta base de datos de datos también se guarda la tabla de enlaces físicos, llamada \emph{links}. En ella se guarda para cada enlace físico, cuál es el archivo que se debe buscar en la tabla de archivos para encontrar sus datos.
+    \begin{itemize}
+    \item Linkpath: El path del enlace físico.
+    \item Originalpath: El path del archivo cuya entrada de la tabla de archivos posee toda la información.
+  \end{itemize}
+  
+  \item \textbf{Mapa de ficheros abiertos}: En esta estructura se guarda qué archivos han sido abiertos para escritura, de forma que se pueda saber cuando se cierran, si han sido modificados y si es el último descriptor siendo cerrado de ese archivo. Este mapa se ha establecido como una base de datos sqlite residente en memoria, ya que solo es necesario durante la ejecución del SF. Cada entrada de la tabla contiene la siguiente información:
+  \begin{itemize}
+   \item fh: Descriptor de ficheros utilizado para abrir este archivo.
+   \item path: Path del archivo lógico que está abierto para escritura.
+   \item deduplicado: Si el archivo está deduplicado o no.
+   \item modificado: Indicador de si el archivo ha sido modificado o no. Un archivo puede abrirse para escritura, y finalmente no ser modificado.
+  \end{itemize}
+\end{itemize}
+
+Con estas tres tablas, dedupfs tiene toda la información necesaria de cada archivo para realizar cualquier operación que se le solicite.
+
+\subsection{Implementación de la funcionalidad}
+
+La funcionalidad completa del sistema de ficheros dedupfs dista bastante de ser trivial en muchas de las funciones que ha habido que reimplementar. Para explicar el funcionamiento de las nuevas funciones implementadas, vamos a seguir el flujo de ejeución, explicando cada una de las partes implicadas en él.
+
+\subsubsection{Apertura, lectura, escritura, y cierre de un fichero}
+
+Estas cuatro operaciones componen la funcionalidad fundamental del sistema de ficheros. Pasamos a explicar el comportamiento de dedupfs en estas operaciones.
+
+\paragraph{Apertura:}
+Cuando se produce la apertura de un archivo, dedupfs recibe una llamada a la función \textbf{bb\_open} con el path del archivo, y los indicadores de apertura correspondientes. Lo primero que hace el SF en este caso, es comprobar que puede abrir el marcador. Si no hay ningún problema al acceder al marcador, entonces se abre el archivo de datos: Se mira si es un enlace duro, y de serlo, se obtiene el archivo al que apunta. Tras esto, se busca este archivo en la base de datos. En caso de estar en la bd, se coge el path de su archivo de datos. Si está deduplicado y se abre en escritura, es necesario abrir una copia, para evitar contaminar el archivo de datos deduplicado (se realiza esta copia si es el primer open de este archivo), esta copia se llama idéntica al archivo de datos, sólo que añadiendo una 'w' al final.
+Si no estuviera en la base de datos, simplemente se utilizará el marcador.
+Finalmente se abre el path que corresponda, y una vez abierto y si se hace en escritura, se introduce en el mapa de archivos abiertos para escritura.
+
+La creación de un archivo nuevo puede verse como un caso particular de apertura en el que se abre un archivo nuevo para escribir en él. En este caso, cuando se recibe una llamada a \textbf{bb\_create}, simplemente se abre el archivo y se introduce en el mapa de archivos abiertos.
 
 
 \newpage
