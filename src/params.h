@@ -28,10 +28,10 @@
 #include <stdio.h>
   
 struct bb_state {
-    FILE *logfile;
-    char *rootdir;
-    void *db; // Base de datos que almacena la información de archivos.
-    void *mapopenw; // Mapa que gestiona los archivos abiertos para escritura.
+	FILE *logfile;
+	char *rootdir;
+	void *db; // Base de datos que almacena la información de archivos.
+	void *mapopenw; // Mapa que gestiona los archivos abiertos para escritura.
 };
 
 //Entrada de la base de datos

@@ -12,41 +12,41 @@
 
 
 sqlite3 * db_open (const char *path) {
-    sqlite3 *db;
-    int rc;
-    char *dbErrMsg = 0;
+	sqlite3 *db;
+	int rc;
+	char *dbErrMsg = 0;
 
-    rc = sqlite3_open(path, &db);
-    if( rc ){
-        log_msg("      Can't open database: %s\n", sqlite3_errmsg(db));
-        sqlite3_close(db);
-        abort();
-    }
-    // Crear las tablas si no están creadas
-    char * peticion =
-    		"CREATE TABLE IF NOT EXISTS files("
-    			"path TEXT PRIMARY KEY ON CONFLICT FAIL,"
-    			"shasum TEXT NOT NULL ON CONFLICT FAIL,"
-    			"datapath TEXT NOT NULL ON CONFLICT FAIL,"
-    			"size INTEGER NOT NULL ON CONFLICT FAIL,"
-    			"deduplicados INTEGER NOT NULL ON CONFLICT FAIL"
-    		");"
-    		"CREATE TABLE IF NOT EXISTS links("
-    			"linkpath TEXT PRIMARY KEY ON CONFLICT FAIL,"
-    			"originalpath TEXT NOT NULL ON CONFLICT FAIL"
-    		");";
-    rc = sqlite3_exec(db, peticion, /*callback*/NULL, 0, &dbErrMsg);
-    if( rc!=SQLITE_OK ){
-    	log_msg("      Error accediendo a la base de datos\n"
-    			"      SQL error: %s\n", dbErrMsg);
-    	sqlite3_free(dbErrMsg);
-    	abort();
-    }
-    return db;
+	rc = sqlite3_open(path, &db);
+	if( rc ){
+		log_msg("      Can't open database: %s\n", sqlite3_errmsg(db));
+		sqlite3_close(db);
+		abort();
+	}
+	// Crear las tablas si no están creadas
+	char * peticion =
+			"CREATE TABLE IF NOT EXISTS files("
+				"path TEXT PRIMARY KEY ON CONFLICT FAIL,"
+				"shasum TEXT NOT NULL ON CONFLICT FAIL,"
+				"datapath TEXT NOT NULL ON CONFLICT FAIL,"
+				"size INTEGER NOT NULL ON CONFLICT FAIL,"
+				"deduplicados INTEGER NOT NULL ON CONFLICT FAIL"
+			");"
+			"CREATE TABLE IF NOT EXISTS links("
+				"linkpath TEXT PRIMARY KEY ON CONFLICT FAIL,"
+				"originalpath TEXT NOT NULL ON CONFLICT FAIL"
+			");";
+	rc = sqlite3_exec(db, peticion, /*callback*/NULL, 0, &dbErrMsg);
+	if( rc!=SQLITE_OK ){
+		log_msg("      Error accediendo a la base de datos\n"
+				"      SQL error: %s\n", dbErrMsg);
+		sqlite3_free(dbErrMsg);
+		abort();
+	}
+	return db;
 }
 
 int db_close (sqlite3 *db) {
-    return sqlite3_close(db);
+	return sqlite3_close(db);
 }
 /**
  * Se introduce esta entrada en la base de datos de ficheros. Si ya existe se reemplaza
@@ -66,7 +66,7 @@ int db_insertar(const char * path, const char * shasum, const char * datapath, u
 	rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
 		log_msg("      ERROR inserting data: %s\n", sqlite3_errmsg(mapa));
-	    return 0;
+		return 0;
 	}
 	sqlite3_finalize(stmt);
 	return 1;
@@ -264,7 +264,7 @@ int db_unlink(const char * path) {
 	int rc;
 	static sqlite3_stmt * stmt;
 	sqlite3 * db = BB_DATA->db;
-    log_msg("    db_unlink(%s)\n",path);
+	log_msg("    db_unlink(%s)\n",path);
 
 	// Probamos a eliminar una entrada con linkpath = path
 	sqlite3_prepare_v2(db,"DELETE fom links where linkpath = ?1", -1,&stmt,NULL);
@@ -272,11 +272,11 @@ int db_unlink(const char * path) {
 	rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
 		log_msg("      ERROR: %s\n", sqlite3_errmsg(db));
-	    return 0;
+		return 0;
 	}
-    if (sqlite3_changes(db)==0) {
-    	return 0;
-    }
+	if (sqlite3_changes(db)==0) {
+		return 0;
+	}
 	return 1;
 }
 
@@ -318,21 +318,21 @@ int db_link_get_heredero(const char * path, char *heredero){
 int db_link_heredar(const char *path, const char *heredero){
 	int rc, cambios=0;
 	sqlite3 * db = BB_DATA->db;
-    log_msg("    db_link_heredar(%s, %s); ",path, heredero);
-    //Se modifican las referencias a path por heredero, y se elimina en caso de
-    // que haya una tras la modificación que se referencie a sí misma.
-    char *dbErrMsg=0, *peticion;
-    asprintf(&peticion,"UPDATE files SET path = '%s' WHERE path = '%s' ;"
+	log_msg("    db_link_heredar(%s, %s); ",path, heredero);
+	//Se modifican las referencias a path por heredero, y se elimina en caso de
+	// que haya una tras la modificación que se referencie a sí misma.
+	char *dbErrMsg=0, *peticion;
+	asprintf(&peticion,"UPDATE files SET path = '%s' WHERE path = '%s' ;"
 			"UPDATE links SET originalpath = '%s' WHERE originalpath = '%s' ;"
 			"DELETE from links where linkpath = originalpath;",
-    		heredero,path,heredero,path);
-    rc = sqlite3_exec(db, peticion, /*callback*/NULL, 0, &dbErrMsg);
-    free(peticion);
+			heredero,path,heredero,path);
+	rc = sqlite3_exec(db, peticion, /*callback*/NULL, 0, &dbErrMsg);
+	free(peticion);
 	cambios += sqlite3_changes(db);
-    if( rc!=SQLITE_OK ){
-    	log_msg("      Error accediendo a la base de datos: %s\n", dbErrMsg);
-    	sqlite3_free(dbErrMsg);
-    }
+	if( rc!=SQLITE_OK ){
+		log_msg("      Error accediendo a la base de datos: %s\n", dbErrMsg);
+		sqlite3_free(dbErrMsg);
+	}
 	log_msg("cambios: %d", cambios);
 	if ( cambios==0){
 		return 0;
@@ -347,22 +347,22 @@ int db_link_heredar(const char *path, const char *heredero){
 void db_rename(const char *path, const char *newpath){
 	int rc, cambios=0;
 	sqlite3 * db = BB_DATA->db;
-    log_msg("    db_rename(%s, %s); ",path, newpath);
-    //Se modifican las referencias a path por newpath en las tablas.
-    char *dbErrMsg=0, *peticion;
-    asprintf(&peticion,"UPDATE files SET path = '%s' WHERE path = '%s' ;"
+	log_msg("    db_rename(%s, %s); ",path, newpath);
+	//Se modifican las referencias a path por newpath en las tablas.
+	char *dbErrMsg=0, *peticion;
+	asprintf(&peticion,"UPDATE files SET path = '%s' WHERE path = '%s' ;"
 			"UPDATE links SET originalpath = '%s' WHERE originalpath = '%s' ;"
 			"UPDATE links SET linkpath = '%s' WHERE linkpath = '%s';",
-    		newpath,path,
+			newpath,path,
 			newpath,path,
 			newpath,path);
-    rc = sqlite3_exec(db, peticion, /*callback*/NULL, 0, &dbErrMsg);
-    free(peticion);
+	rc = sqlite3_exec(db, peticion, /*callback*/NULL, 0, &dbErrMsg);
+	free(peticion);
 	cambios += sqlite3_changes(db);
-    if( rc!=SQLITE_OK ){
-    	log_msg("      Error accediendo a la base de datos: %s\n", dbErrMsg);
-    	sqlite3_free(dbErrMsg);
-    }
+	if( rc!=SQLITE_OK ){
+		log_msg("      Error accediendo a la base de datos: %s\n", dbErrMsg);
+		sqlite3_free(dbErrMsg);
+	}
 	log_msg("cambios: %d", cambios);
 }
 
@@ -373,35 +373,35 @@ void db_rename(const char *path, const char *newpath){
  * y si ha sido modificado.
  */
 sqlite3 * map_open() {
-    sqlite3 * mapa;
-    int rc;
-    char * dbErrMsg = 0;
-    rc = sqlite3_open(":memory:", &mapa);
-    if( rc ){
-        log_msg("      Can't open database: %s\n", sqlite3_errmsg(mapa));
-        sqlite3_close(mapa);
-        abort();
-    }
-    log_msg("      bd mem_mapa() creada\n");
-    // Crear la tabla si no está creada
-    char * peticion =
-    		"CREATE TABLE IF NOT EXISTS mapa("
-    		  "fh INTEGER PRIMARY KEY ON CONFLICT FAIL,"
-    		  "path TEXT NOT NULL ON CONFLICT FAIL,"
-    		  "deduplicado INTEGER DEFAULT 0,"
-    		  "modificado INTEGER DEFAULT 0"
-    			");";
-    rc = sqlite3_exec(mapa, peticion, /*callback*/NULL, 0, &dbErrMsg);
-    if( rc!=SQLITE_OK ){
-    	log_msg("      Error accediendo a la base de datos: %s\n", dbErrMsg);
-    	sqlite3_free(dbErrMsg);
-    	abort();
-    }
-    return mapa;
+	sqlite3 * mapa;
+	int rc;
+	char * dbErrMsg = 0;
+	rc = sqlite3_open(":memory:", &mapa);
+	if( rc ){
+		log_msg("      Can't open database: %s\n", sqlite3_errmsg(mapa));
+		sqlite3_close(mapa);
+		abort();
+	}
+	log_msg("      bd mem_mapa() creada\n");
+	// Crear la tabla si no está creada
+	char * peticion =
+			"CREATE TABLE IF NOT EXISTS mapa("
+			  "fh INTEGER PRIMARY KEY ON CONFLICT FAIL,"
+			  "path TEXT NOT NULL ON CONFLICT FAIL,"
+			  "deduplicado INTEGER DEFAULT 0,"
+			  "modificado INTEGER DEFAULT 0"
+				");";
+	rc = sqlite3_exec(mapa, peticion, /*callback*/NULL, 0, &dbErrMsg);
+	if( rc!=SQLITE_OK ){
+		log_msg("      Error accediendo a la base de datos: %s\n", dbErrMsg);
+		sqlite3_free(dbErrMsg);
+		abort();
+	}
+	return mapa;
 }
 
 int map_close () {
-    return sqlite3_close(BB_DATA->mapopenw);
+	return sqlite3_close(BB_DATA->mapopenw);
 }
 
 /**
@@ -421,7 +421,7 @@ int map_add(unsigned long long int fh,const char * path, int deduplicado, char m
 	rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
 		log_msg("      ERROR inserting data: %s\n", sqlite3_errmsg(mapa));
-	    return 0;
+		return 0;
 	}
 	sqlite3_finalize(stmt);
 	return 1;
@@ -482,7 +482,7 @@ int map_count(const char * path){
 	}
 	else if (rc != SQLITE_DONE) {
 		log_msg("       ERROR map_count(): %s\n", sqlite3_errmsg(mapa));
-	    count=-1;
+		count=-1;
 	}
 	sqlite3_finalize(stmt_count);
 	return count;
@@ -496,12 +496,12 @@ void map_set_modificado(unsigned long long int fh){
 	int rc;
 	char *dbErrMsg, *peticion;
 	sqlite3 * mapa = BB_DATA->mapopenw;
-    asprintf(&peticion, "UPDATE mapa SET modificado = 1 WHERE fh=%llu", fh);
-    rc = sqlite3_exec(mapa, peticion, /*callback*/NULL, 0, &dbErrMsg);
-    log_msg("    map_set_modificado(%llu)\n",fh);
-    free(peticion);
-    if( rc!=SQLITE_OK ){
-    	log_msg("      Error accediendo a la base de datos: %s\n", dbErrMsg);
-    	sqlite3_free(dbErrMsg);
-    }
+	asprintf(&peticion, "UPDATE mapa SET modificado = 1 WHERE fh=%llu", fh);
+	rc = sqlite3_exec(mapa, peticion, /*callback*/NULL, 0, &dbErrMsg);
+	log_msg("    map_set_modificado(%llu)\n",fh);
+	free(peticion);
+	if( rc!=SQLITE_OK ){
+		log_msg("      Error accediendo a la base de datos: %s\n", dbErrMsg);
+		sqlite3_free(dbErrMsg);
+	}
 }
