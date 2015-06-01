@@ -284,40 +284,23 @@ Si equilibramos los tres escenarios estudiados, podemos observar que aunque en u
 \newpage
 \section{Anexo: Listado del código fuente}
 
-\subsection{}
-\iffalse 
-\begin{figure}[h!]
-  \centering
-  \label{fig:supervisiontree}
-  \includegraphics[width=.95\linewidth]{supervisiontree}
-  \caption{Árbol de supervisión}
-\end{figure}
-\fi
+\subsection{dedupfs.c}
+\mytcbinputlisting{../src/dedupfs.c}
 
+\subsection{database.h}
+\mytcbinputlisting{../src/database.h}
 
-\iffalse
-\lstdefinestyle{mystyle}{language=C,
-  breakatwhitespace=false,
-  breaklines=true,
-  basicstyle=\footnotesize
-}
-\begin{mycode}
-1> application:start(otpapp).
-Iniciado supervisor s1
-Iniciado supervisor s2
-Iniciado worker w2A 
-Iniciado worker w2B 
-Iniciado supervisor s3
-Iniciado worker w3A 
-Iniciado supervisor s5
-Iniciado worker w5A 
-Iniciado worker w5B 
-Iniciado worker w5C 
-Iniciado supervisor s4
-Iniciado worker w4A 
-Iniciado worker w4B 
-ok
-\end{mycode}
-\fi
+\subsection{database.c}
+\mytcbinputlisting{../src/database.c}
+
+\subsection{log.h}
+\mytcbinputlisting{../src/log.h}
+
+\subsection{log.c}
+\mytcbinputlisting{../src/log.c}
+
+\subsection{params.h}
+\mytcbinputlisting{../src/params.h}
+
 
 \end{document}

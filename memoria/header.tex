@@ -55,10 +55,44 @@
       right=0mm,
       width=\textwidth,
       boxrule=1pt,
-      colback=blue!20,
+      colback=blue!10,
       listing only,
       listing options={style=mystyle},
       breakable
+}
+%% Mi propio tcb input
+\newcommand{\mytcbinputlisting}[1]
+{
+  \tcbinputlisting{  
+    listing file=#1,
+    arc=0mm,
+    top=0mm,
+    bottom=0mm,
+    left=3mm,
+    right=0mm,
+    width=\textwidth,
+    boxrule=1pt,
+    colback=blue!10,
+    listing only,
+    listing options={style=mystyle},
+    breakable
+  }
+}
+\lstdefinestyle{mystyle}{
+  language=C,
+  basicstyle=\footnotesize\ttfamily,
+  keywordstyle=\color{blue},
+  stringstyle=\color{red},
+  commentstyle=\color{black!75},
+  directivestyle={\color{magenta}},
+  breakatwhitespace=false,
+  showstringspaces = false,
+  numbers = left,
+  numbersep = 15pt,
+  numberstyle = \footnotesize,
+  stepnumber=5,
+  breaklines=true,
+  tabsize=2
 }
 
 \textheight=22.94cm \textwidth=17cm \topmargin=-1cm
