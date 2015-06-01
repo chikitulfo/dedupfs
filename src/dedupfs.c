@@ -80,7 +80,7 @@ static void calcular_hash(const char * path, char * outHashString, unsigned int 
  * Función encargada de asegurar que los directorios necesarios para guardar
  * los datos en el directorio de datos están creados.
  * El path donde se almacenen será .dedupfs/data/X/Y/HASH donde X e Y son
- * los tres primeros caracteres del hash.
+ * los dos primeros caracteres del hash.
  * Devuelve en datapath la ruta donde se almacenan los datos de ese hash.
  * (Relativa a la raiz del sf fuse)
  */
@@ -1327,23 +1327,8 @@ static void check_conf_dir(char rootdir[PATH_MAX]){
 	free(dedupdir);
 }
 
-void maindebug(){
-	/*
-	fprintf(stderr,"MAIN DEBUG\n");
-	char hashstring[41];
-	fprintf(stderr,"Calcular hash:\n");
-	calcular_hash("/tmp/dedupfsdebug",hashstring, );
-	fprintf(stderr,"%s\n", hashstring);
-	fprintf(stderr,"OK");
-	exit(0);
-	*/
-}
-
 int main(int argc, char *argv[])
 {
-	//DEBUG
-	//maindebug(); //DEBUG
-	//DEBUG
 	int fuse_stat;
 	struct bb_state *bb_data;
 
