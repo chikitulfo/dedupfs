@@ -11,7 +11,7 @@
 \newpage
 \section{Resumen del trabajo realizado}
 
-El objetivo de este proyecto de programación práctico ha sido desarrollar un sistema de ficheros capaz de detectar cuándo se almacenan ficheros idénticos, y dejar solo una copia de los datos en el sistema de ficheros, haciendo que el resto de ficheros sean simples apuntadores a la copia que contiene los datos. Esto permite que, en sistemas de ficheros donde hay muchos ficheros iguales, se ahorre una cantidad importante de espacio en disco.
+El objetivo de este proyecto de programación práctico ha sido desarrollar un sistema de ficheros con FUSE capaz de detectar cuándo se almacenan ficheros idénticos, y dejar solo una copia de los datos en el sistema de ficheros, haciendo que el resto de ficheros sean simples apuntadores a la copia que contiene los datos. Esto permite que, en sistemas de ficheros donde hay muchos ficheros iguales, se ahorre una cantidad importante de espacio en disco.
 
 Esta deduplicación de ficheros idénticos, se hace de forma transparente al usuario del sistema de ficheros, por lo que se siguen viendo ambos archivos como archivos diferentes, y en caso de modificarse uno de ellos, se volverán a separar y quedarán como dos ficheros diferentes. El usuario no llega a percibir estos cambios, y él utiliza su sistema de ficheros de forma normal, pero se ahorra espacio si tiene muchos archivos iguales.
 Para detectar si dos ficheros son idénticos, se ha utilizado la función SHA1 para calcular la clave de dispersión del archivo. Con esta clave se almacenan los datos en un directorio del sf, con un fichero que tiene como nombre el código hexadecimal del hash, y se deja el fichero original vacío como un marcador. En una base de datos interna, se almacenan una relación de cada nombre de fichero y qué clave de dispersión le corresponde, además de algunos parámetros adicionales que se indican más adelante. Esto permite saber dónde se encuentran realmente los datos de cada fichero, y se pueden mover fácilmente de un lugar a otro cuando se modifican y se recalcula su clave de dispersión.
@@ -43,7 +43,7 @@ A lo largo de esta memoria explicativa del desarrollo de la práctica propuesta,
 El diseño e implementación del sistema de ficheros \emph{Dedupfs} se ha llevado a cabo teniendo en cuenta desde el primer momento cuáles eran los principales retos a tener en cuenta para lograr la deduplicación totalmente transparente al usuario.
 \begin{itemize}
  \item Es necesario conocer qué ficheros están deduplicados y cuáles no, y dónde se encuentran sus datos, para ello se utiliza una base de datos sqlite que se almacena en la dirección \texttt{\small .dedupfs/dedupfs.db}.
- \item Es necesario que los archivos deduplicados permanezcan independientes de cara al usuario del sistema de ficheros, y que los camios producidos en uno de ellos no se propaguen a otros. Además, sus permisos, tiempos de modificación, y otros atributos, deben permanecer independientes. Por este motivo se ha optado por dejar un marcador vacío en el lugar de cada archivo, donde se conservan sus permisos y otros atributos, y almacenar los datos en una subcarpeta del directorio \texttt{\small .dedupfs/data} con el hash de los datos como nombre de archivo.
+ \item Es necesario que los archivos deduplicados permanezcan independientes de cara al usuario del sistema de ficheros, y que los camios producidos en uno de ellos no se propaguen a otros. Además, sus permisos, tiempos de modificación, y otros atributos, deben permanecer independientes. Por este motivo se ha optado por dejar un marcador vacío en el lugar de cada archivo, donde se conservan sus permisos y otros atributos, y almacenar los datos en una subcarpeta del directorio \texttt{\small .dedupfs/data/} con el hash de los datos como nombre de archivo.
  \item Los enlaces físicos sirven para designar al mismo fichero con diferentes nombres desde el punto de vista del usuario. Es necesario tratarlo de la forma adecuada, y evita tratar enlaces físicos como si fueran archivos deduplicados. Para ello se ha creado una segunda tabla en la base de datos, que contabiliza estos enlaces y permite gestionar los archivos.
  \item Para evitar realizar el cálculo de hash cuando un archivo todavía puede ser modificado, lo más adecuado es hacerlo solamente cuando un fichero haya sido modificado, y deja de ser utilizado. Para ello se almacena en memoria un mapa de archivos abiertos para escritura, se marca si son modificados, y se computa su hash cuando los cierra el último proceso que los tenga abiertos.
 \end{itemize}
@@ -98,6 +98,84 @@ Si no estuviera en la base de datos, simplemente se utilizará el marcador.
 Finalmente se abre el path que corresponda, y una vez abierto y si se hace en escritura, se introduce en el mapa de archivos abiertos para escritura.
 
 La creación de un archivo nuevo puede verse como un caso particular de apertura en el que se abre un archivo nuevo para escribir en él. En este caso, cuando se recibe una llamada a \textbf{bb\_create}, simplemente se abre el archivo y se introduce en el mapa de archivos abiertos.
+
+\paragraph{Lectura y escritura:}
+En el caso de la lectura de un fichero, no ha hecho falta realizar ningún cambio a la función \textbf{bb\_read}, puesto que se trabaja con el descriptor de ficheros. Por otra parte, en la función \textbf{bb\_write} sólo se ha hecho un cambio: cuando se escribe en un fichero, éste se establece como modificado en el mapa de ficheros abiertos.
+
+\paragraph{Cierre:} El cierre de un fichero que estaba abierto se lleva a cabo en la función \textbf{bb\_release}. Ésta es una de las funciones más complejas del sistema de ficheros, ya que es aquí donde se ha implementado toda la lógica de la deduplicación de ficheros, al ser el cierre de un archivo modificado el mejor momento para recalcular su hash y comprobar si pasa a estar deduplicado, o si debe reduplicarse.\\
+Lo primero que se hace en esta función, es cerrar el descriptor abierto y ejecutar \emph{utime} sobre el marcador, para actualizar su tiempo de modificación. Tras esto, se comprueba que el fichero se encuentre en el mapa de archivos abiertos para escritura, haya sido modificado, y sea este descriptor el último que queda abierto. De no ser así, no habría nada más que hacer. Si lo anterior se cumple, el archivo se había modificado, y será necesario calcular su hash, comprobar si es un fichero enlazado físicamente, y si está en la base de datos. Nos encontramos con dos escenarios bien diferenciados:
+\begin{itemize}
+ \item Si no está en la tabla de ficheros, significa que se trata de un archivo nuevo, o que anteriormente estaba vacío. Se calcula su hash y tamaño, y se mira si ya está ese hash en la BD. En caso positivo, sólo hay que introducir una nueva entrada en la base de datos, incrementar el contador de deduplicados en cada entrada con ese hash, y truncar el archivo original para dejarlo como marcador. En caso negativo, se trata del único archivo con ese hash, y es necesario moverlo al directorio interno donde se almacenan los archivos de datos. Para ello hace falta calcular y crear el subdirectorio donde se almacena el hash (de la forma \texttt{\small /.dedupfs/data/X/Y/hash} donde X e Y son el primer y segundo caracter del hash), moverlo ahí, y recrear el marcador en el lugar original, conservando los mismos permisos que tenía. Finalmente, se añade en la base de datos.
+ \item Si está en la tabla de ficheros, significa que hemos modificado un archivo que ya existe. Se calcula su hash y tamaño. Si el nuevo tamaño es cero, se saca de la base de datos y deja sólo el marcador, en caso de que esté deduplicado, se decrementa el número de deuplicados para ese hash, si no lo está, se elimina el archivo de ese hash.\\
+ Si el nuevo tamaño es mayor de cero, se comprueba si el nuevo hash y el antiguo de este archivo difieren. Si no difieren, no hay nada que hacer. Si lo hacen,debe insertarse en la base de datos con el nuevo hash y path de datos, y debe moverse a la localización del nuevo hash, a no ser que ese hash ya esté presente en el sistema, en cuyo caso se elimina este archivo y incrementa el número de deuplicados para el nuevo hash. Por último, se decrementa el número de deduplicados para el antiguo hash.\\
+ Destacar que, puesto que si está deduplicado el archivo se está trabajando con una copia, no es necesario contemplar la conservación del archivo de datos en el lugar original. Si se elimina o se mueve y está deduplicado, se elimina o se mueve la copia, y si no está deduplicado, se actúa sobre el archivo de datos.
+\end{itemize}
+
+\subsubsection{Atributos de fichero}
+
+Para obtener los atributos del fichero se utilizan las funciones \textbf{bb\_getattr} y \textbf{bb\_fgetattr}. La primera utiliza el path simplemente, y la segunda utiliza el descriptor de fichero de un archivo abierto. En estas funciones ha sido necesario hacer un pequeño cambio, ya que el archivo descrito por el path es sólo un marcador en el sistema dedupfs. Este marcador almacena todos los atributos del fichero excepto el tamaño, ya que está vacío. Por lo tanto estas funciones deben comprobar si el fichero está en la base de datos, y si existe una entrada, tomar el tamaño de ahí y sustituir el que han obtenido del marcador.
+
+\subsubsection{Truncado de archivos}
+
+Para modificar el tamaño de un archivo se dispone de las funciones \textbf{bb\_truncate} y \textbf{bb\_ftruncate}. Al igual que en el caso anterior, la primera trabaja con el path de un archivo, mientras que la otra lo hace con el descriptor de fichero abierto. En este caso, ambas no funcionan igual. La función ftruncate que funciona con un descriptor de fichero abierto, puede verse como una modificación de un fichero abierto en escritura, por lo que simplemente se marca el fichero como modificado en el mapa de ficheros abiertos. En el caso de truncate, se utiliza el path, y se puede ver como una apertura de archivo, modificación de su tamaño, y cierre. Lo que se ha hecho en este caso, es utilizar las funciones de apertura, truncamiento y cierre ya implementadas, de forma que no hubiera que repetir el cálculo de su nuevo hash y el tratamiento adecuado.
+
+\subsubsection{Renombrado}
+
+El renombrado de un archivo mueve un archivo desde un punto del sistema de ficheros hasta otro diferente, sin afectar a sus datos. Esto lo hace la función \textbf{bb\_rename}. Para lograr esta funcionalidad de forma completa en dedupfs, solamente ha sido necesario mover el marcador, y en caso de que esa operación sea exitosa, cambiar toda referencia al path anterior en la base de datos por el path nuevo.
+
+\subsubsection{Enlaces físicos y borrado}
+
+Los enlaces físicos se crean mediante llamadas a \textbf{bb\_link}. En esta función simplemente ha sido necesario incluir una llamada a una función del módulo de la base de datos que añade una entrada en la tabla de enlaces duros.\\
+El borrado de archivos, se lleva a cabo mediante \textbf{bb\_unlink}. En este caso sí ha hecho falta tener en cuenta algunas cuestiones. Además de eliminar el marcador, hay que ver si está en la base de datos.Si está, puede ser que haya que eliminar su entrada, o, en caso de estar enlazado, deberá heredarla uno de los enlaces de la tabla de enlaces. Si se elimina su entrada, es necesario ver si estaba deduplicado, y decrementar el contador de deduplicados, o eliminar su archivo de datos si no lo estaba. Por último, en caso de no encontrarse en la tabla de ficheros, puede que esté en la de enlaces como enlace, y se elimina de ahí.
+
+\subsubsection{Inicialización y destrucción del SF}
+
+La biblioteca de FUSE proporciona dos funciones de inicialización y destrucción de las estructuras de datos necesarias, que son llamadas cuando se produce el arranque y parada del sistema de ficheros. Estas funciones son \textbf{bb\_init} y \textbf{bb\_destroy}. En la primera se lleva a cabo toda la inicialización del sistema de ficheros, de las tablas y bases de datos, y del mapa de ficheros abiertos. Se comprueba si el sistema se está montando por primera vez, y en caso de ser así, se crean las carpetas de datos, la base de datos, y se guarda un puntero en la estructura proporcionada por fuse para poder acceder a estas bases de datos más adelante. Después, cuando el sistema de ficheros se cierra, se recibe una llamada a la segunda función, que se encarga de cerrar las conexiones a las bases de datos.
+
+\subsubsection{Funciones auxiliares}
+
+Además de las funciones proporcionadas por FUSE, se han añadido algunas más para realizar ciertas tareas requeridas por una o varias operaciones. Se describen a continuación.
+
+\paragraph{check\_conf\_dir:} Esta función se utiliza previamente a la llamada a la función principal de FUSE, y se encarga de comprobar que el sistema de ficheros tenga acceso con los permisos adecuados, y si no existen los subdirectorios ocultos de dedupfs, los crea.
+
+\paragraph{calcular\_hash:} Es la encargada de leer los datos de un fichero y calcular su hash utilizando la función SHA1. También registra el tamaño del fichero leído, y devuelve tanto el hash en forma de cadena de caracteres hexadecimales, como el tamaño del fichero cuyo hash ha sido calculado. Para el cálculo del hash, se basa en la biblioteca \emph{openssl}
+
+\paragraph{preprara\_datapath:} Esta función realiza dos tareas simultáneas: Por un lado, dado un hash, devuelve el path donde se tiene que almacenar dentro del directorio de datos; por otro lado, se encarga de asegurar que el subdirectorio en el que se va a almacenar el hash esté creado. El subdirectorio en el que se guarda un hash es de la forma \texttt{\small .dedupfs/data/x/y/} donde x e y son los dos primeros caracteres del hash a almacenar. Esto se hace así con el fin de evitar directorios enormes si hay muchos archivos.
+
+\paragraph{copiar:} Requiere poca explicación, se le proporcionan dos paths como parámetro, y copia el contenido del primero en el segundo. Es utilizada cuando se tiene que abrir una copia de un archivo deduplicado para un proceso que va a escribir en él.
+
+\subsubsection{Módulo de acceso a las BBDD}
+
+Como se ha explicado anteriormente, para gestionar los archivos deduplicados, enlaces físicos y archivos abiertos para escritura, se utilizan bases de datos sqlite3. Toda la funcionalidad relacionada con la apertura, consultas y cierre de estas BBDD se ha encapsulado en un módulo independiente compuesto por los archivos \texttt{\small database.c} y \texttt{\small database.h}. Dentro de este módulo se han creado las funciones que realizan toda la interacción con la base de datos.
+
+\paragraph{Funciones de la base de datos:} La base de datos principal de dedupfs es la encargada de almacenar la tabla de ficheros y sus hashes, y la de enlaces físicos. Las funciones que interactúan con esta base de datos comienzan todas con el prefijo \emph{db\_}. Las describimos a continuación:
+\begin{itemize}
+ \item \textbf{db\_open}: Abre la base de datos .dedupfs (creándola si no existía previamente) y crea las dos tablas necesarios si no estaban creadas previamente. Devuelve un puntero al objeto sqlite3 que el módulo principal guarda en los datos privados de FUSE, y que se utiliza posteriormente en el resto de consultas.
+  \item \textbf{db\_close}: Cierra la conexión a la base de datos creada en el paso anterior.
+  \item \textbf{db\_insertar}: Introduce una entrada en la base de datos, sustituyéndola por la anterior si existiera ya una con el mismo path.
+  \item \textbf{db\_get}: Recupera de la base de datos la entrada del argumento path, y la devuelve en el puntero que se le pasa como parámetro.
+  Devuelve un 1 si ha encontrado la entrada, y un 0 si no.
+  \item \textbf{db\_get\_datapath\_hash}: Recibe un hash como argumento, y devuelve por parámetros el datapath de ese hash, así como la cuenta de deduplicados que tiene. Devuelve 1 si ha encontrado el hash, y 0 si no.
+  \item \textbf{db\_incrementar\_duplicados}: Incrementa en 1 la cuenta de duplicados para cada entrada de la bd que coincida con ese hash.
+  \item \textbf{db\_decrementar\_duplicados}: Realiza la operación inversa a la anterior.
+  \item \textbf{db\_eliminar}: Elimina la entrada que corresponde con path de la base de datos.
+  \item \textbf{db\_addLink}: Inserta una entrada en la tabla de enlaces físicos.
+  \item \textbf{db\_getLinkPath}: Dado un path, recupera de la tabla de enlaces el path donde se encuentra su información en la otra tabla.
+  \item \textbf{db\_unlink}: Elimina la entrada que corresponde con path de la tabla de enlaces.
+  \item \textbf{db\_link\_get\_heredero}: Cuando se elimina un archivo de la tabla de ficheros, puede que tuviera un enlace físico. Esta función busca en la tabla de enlaces si el path proporcionado tenía algún enlace, y en caso de ser así, lo devuelve para ser el heredero del original. Esta función devuelve 1 si se encuentra heredero, y 0 si no.
+  \item \textbf{db\_link\_heredar}: Recibe un path, y el heredero por el que se debe sustituir, y sustituye toda ocurrencia del primero por el segundo en las dos tablas (elimina también su propia entrada de la tabla de enlaces si se ha cambiado, puesto que no tiene sentido apuntarse a sí mismo).
+  \item \textbf{db\_rename}: Se encarga de sustituir un path por otro en las tablas de la base de datos cuando se produce un renombrado de un archivo. Se diferencia de la función anterior en que ésta no puede producir el borrado de ninguna entrada.
+\end{itemize}
+
+\paragraph{Funciones del mapa de archivos abiertos:} El mapa de archivos abiertos para escritura se gestiona como una base de datos en memoria, por lo que tiene también sus correspondientes funciones de acceso y consulta en este módulo:
+\begin{itemize}
+ \item \textbf{map\_open}: Se encarga de abrir la base de datos en memoria y devolver la referencia a la conexión con la BD
+ \item \textbf{map\_close}: Cierra la conexión abierta en la función anterior.
+ \item \textbf{map\_add}: Inserta una entrada en el mapa, correspondiente al fichero que ha sido abierto para escritura.
+ \item \textbf{map\_extract}: Extrae la entrada correspondiente al descriptor de ficheros proporcionado, se le proporciona un argumento entero \textit{eliminar} que si está a true, indica que también debe eliminarse dicha entrada. La función devuelve por parámetro la entrada recuperada, y 1 si se ha encontrado dicha entrada, o 0 si no se ha encontrado.
+ \item \textbf{map\_count}: Dado un path, devuelve el número de veces que está abierto para escritura.
+ \item \textbf{map\_set\_modificado}: Establece el fichero como modificado en la entrada correspondiente al argumento proporcionado.
+\end{itemize}
 
 
 \newpage
