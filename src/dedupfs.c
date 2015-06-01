@@ -79,7 +79,7 @@ static void calcular_hash(const char * path, char * outHashString, unsigned int 
 /**
  * Función encargada de asegurar que los directorios necesarios para guardar
  * los datos en el directorio de datos están creados.
- * El path donde se almacenen será .dedupfs/data/X/Y/Z/HASH donde X, Y y Z son
+ * El path donde se almacenen será .dedupfs/data/X/Y/HASH donde X e Y son
  * los tres primeros caracteres del hash.
  * Devuelve en datapath la ruta donde se almacenan los datos de ese hash.
  * (Relativa a la raiz del sf fuse)
@@ -96,12 +96,8 @@ static void preparar_datapath(char * hash, char * datapath) {
 	rv = mkdir(datapath, 0777); 	//Intentamos crear Y, y asumimos el error EEXIST
 	if(rv != 0 && errno != EEXIST)
 		bb_error("mkdir: ");
-	sprintf(datapath, "%s%c/", datapath, hash[2]);
-	rv = mkdir(datapath, 0777); 	//Intentamos crear Z, y asumimos el error EEXIST
-	if(rv != 0 && errno != EEXIST)
-		bb_error("mkdir: ");
 	//Devolver sin rootdir
-	sprintf(datapath, "/.dedupfs/data/%c/%c/%c/%s", hash[0], hash[1], hash[2], hash);
+	sprintf(datapath, "/.dedupfs/data/%c/%c/%s", hash[0], hash[1], hash);
 }
 
 /**
@@ -399,7 +395,7 @@ int bb_unlink(const char *path)
 		} else {
 			//Si no está en la tabla de datos, se elimina de la de enlaces
 			// puesto que puede estar como enlace
-		db_unlink(path);
+			db_unlink(path);
 		}
 	}
 
@@ -741,8 +737,8 @@ int bb_release(const char *path, struct fuse_file_info *fi)
 			else if (strcmp(entradadb.sha1sum,nuevohash)) {
 				// Si el tamaño no es 0, y los hashes son diferentes
 				if (db_get_datapath_hash(nuevohash, entradadb.datapath,&(entradadb.deduplicados))){
-				// El nuevo hash ya está presente, eliminar
-				unlink(truedatapath);
+					// El nuevo hash ya está presente, eliminar
+					unlink(truedatapath);
 					db_insertar(path, nuevohash, entradadb.datapath, size, entradadb.deduplicados);
 					db_incrementar_duplicados(nuevohash);
 				}else {
