@@ -52,6 +52,10 @@ Todo lo anterior se ha implementado modificando las funciones principales del ej
 
 También, se ha incluido un módulo llamado \texttt{\small database} que se encarga de gestionar toda la comunicación del módulo principal con las distintas tablas de la base de datos y con el mapa de ficheros abiertos (que también ha sido implementado como una base de datos sqlite en memoria).
 
+Se ha mantenido y utilizado, por conveniencia, el módulo \texttt{\small log} para servir de ayuda en la depuración durante el desarrollo del programa. Aunque se ha definido un flag del preprocesador que anula el uso de este sistema de log una vez que el programa ha sido finalizado, puesto que el flujo de informaciónn generado por éste era demasiado alto.
+
+Finalmente, se ha ampliado el fichero de cabecera \texttt{\small params.h} con la definición de algunas estructuras de datos, y la inclusión de cabeceras nuevas que han sido necesarias.
+
 \subsection{Estructuras de datos}
 
 Como se ha indicado en el apartado anterior, las estructuras de datos utilizadas en el proyecto se han basado en bases de datos sqlite3, tanto para el almacenamiento de la información de archivos deduplicados y sus hashes, como para el mapa de archivos abiertos en memoria. Incluyendo también los enlaces físicos.
@@ -83,6 +87,8 @@ Como se ha indicado en el apartado anterior, las estructuras de datos utilizadas
 \end{itemize}
 
 Con estas tres tablas, dedupfs tiene toda la información necesaria de cada archivo para realizar cualquier operación que se le solicite.
+
+En el fichero de cabecera \texttt{\small param.h} se han incluido dos \emph{struct} que se corresponden con las entradas en la base de de datos de archivos, y en el mapa de ficheros abiertos en escritura.
 
 \subsection{Implementación de la funcionalidad}
 
@@ -172,7 +178,7 @@ Como se ha explicado anteriormente, para gestionar los archivos deduplicados, en
  \item \textbf{map\_open}: Se encarga de abrir la base de datos en memoria y devolver la referencia a la conexión con la BD
  \item \textbf{map\_close}: Cierra la conexión abierta en la función anterior.
  \item \textbf{map\_add}: Inserta una entrada en el mapa, correspondiente al fichero que ha sido abierto para escritura.
- \item \textbf{map\_extract}: Extrae la entrada correspondiente al descriptor de ficheros proporcionado, se le proporciona un argumento entero \textit{eliminar} que si está a true, indica que también debe eliminarse dicha entrada. La función devuelve por parámetro la entrada recuperada, y 1 si se ha encontrado dicha entrada, o 0 si no se ha encontrado.
+ \item \textbf{map\_extract}: Extrae la entrada correspondiente al descriptor de ficheros proporcionado, se le proporciona un argumento entero \emph{eliminar} que si está a true, indica que también debe eliminarse dicha entrada. La función devuelve por parámetro la entrada recuperada, y 1 si se ha encontrado dicha entrada, o 0 si no se ha encontrado.
  \item \textbf{map\_count}: Dado un path, devuelve el número de veces que está abierto para escritura.
  \item \textbf{map\_set\_modificado}: Establece el fichero como modificado en la entrada correspondiente al argumento proporcionado.
 \end{itemize}
@@ -181,16 +187,104 @@ Como se ha explicado anteriormente, para gestionar los archivos deduplicados, en
 \newpage
 \section{Manual de uso}
 
+El uso del sistema de ficheros dedupfs es bastante sencillo. Los requisitos necesarios para poder compilar y ejecutar dedupfs son tener instalados los paquetes de desarrollo de fuse, openssl, y sqlite3. En ubuntu 14.04 esto se consigue instalando los paquetes \texttt{\small libssl-dev pkg-config libfuse2 libfuse-dev sqlite3 libsqlite3-dev}. Una vez hecho esto, sólo queda situarse dentro del directorio de dedupfs, y ejecutar el comando \texttt{\small make}, para generar el ejecutable.
+
+Si todo ha ido bien, obtendremos un ejecutable \texttt{\small \textbf{dedupfs}} que nos permitirá montar nuestro sistema de ficheros. Para montarlo, solamente necesitamos un punto de montaje, que puede ser cualquier directorio vacío, y un directorio subyacente o raíz en el que se almacenarán los archivos de nuestro sistema de ficheros. Este directorio raíz debe estar vacío la primera vez que se utilice dedupfs. El comando para montar nuestro sistema de ficheros es:
+\begin{center} \vspace{-0.6cm}
+ \texttt{./dedupfs -s directorio/raiz punto/de/montaje}
+\end{center}
+
+Una vez que ya tenemos montado el sistema de ficheros, podemos trabajar tranquilamente sobre el punto de montaje y dedupfs se encargará de todo el trabajo para analizar y deduplicar los ficheros que escribamos en él.
+Cuando se ha terminado de trabajar con el sistema de ficheros, se puede desmontar mediante el comando \texttt{fusermount -uz punto/de/montaje} y los archivos dejarán de estar accesibles hasta que vuelva a montarse.
+
+
 \newpage
 \section{Pruebas del sistema de ficheros}
 
-%% Linux kernel sources 4.0.4
-% rootdir: 97609 archivos. du: 675M
-% nondeup: 48948 archivos. du: 648M
+\subsection{Prueba de funcionamiento}
+
+Para demostrar el funcionamiento del sistema de ficheros dedupfs, vamos a realizar unas pruebas, escribiendo archivos en el sistema de ficheros, y realizando cambios en éstos que los convierten en copias de otros ya existentes, analizando enlaces físicos, rendimiento sobre permisos, etc.
+
+\begin{figure}[h!]
+  \centering
+  \label{fig:test1}
+  \includegraphics[width=.9\linewidth]{imagenes/test1}
+  \caption{Deduplicado de archivos}
+\end{figure}
+
+En la figura \ref{fig:test1} se han creado 3 archivos con el mismo contenido (``hola''), uno más diferente (``adios''), y un enlace a uno de esos archivos. Se puede observar el resultado de la ejecución de \texttt{\small ls -l} sobre el directorio. Vemos cómo todos los archivos son detectados como archivos independientes entre sí, a excepción de los que están físicamente enlazados, cuya cuenta de enlaces indica 2. Se puede ver también, que al ejecutar de nuevo texttt{\small ls -l} en el directorio raíz, el tamaño de todos estos archivos es 0, puesto que son meros marcadores, y su contenido se encuentra almacenado en un directorio oculto. Si el sistema de ficheros funciona adecuadamente, solamente debería haber quedado una copia del contenido del fichero hola, y una copia del contenido de adios.
+
+\begin{figure}[h!]
+  \centering
+  \label{fig:db1}
+  \includegraphics[width=.75\linewidth]{imagenes/db1}
+  \caption{Contenidos de la BD tras deduplicado}
+\end{figure}
+
+En la figura \ref{fig:db1} tenemos una captura del contenido de la base de datos tras ejecutar los comandos anteriores. En ella podemos observar que en la tabla \emph{files} tenemos una entrada por cada fichero que se ha creado. En aquellos que se han creado co el mismo contenido, se observa que el shasum es el mismo, y que la cuenta de deduplicados asciende a 2, ya que se han producido 2 deduplicaciones. También se ve como el enlace \emph{enlacehola} no se encuentra en la tabla \emph{files} si no en la de \emph{links}, apuntando al archivo original, hola.
+
+\begin{figure}[h!]
+  \centering
+  \label{fig:test2}
+  \includegraphics[width=.6\linewidth]{imagenes/test2}
+  \caption{Captura de tests adicionales}
+\end{figure}
+
+En la figura \ref{fig:test2} se ejecutan otra serie de comandos que permiten comprobar la evolución del sistema de ficheros al deduplicar y reduplicar más archivos. En este caso vemos que se añade otra palabra al archivo \emph{hola3}, lo que causa que se reduplique, se crea otro enlace a partir de enlacehola, y se comprueba que los contenidos de \emph{hola} y \emph{hola3} han cambiado. Se escribe en \emph{hola} otra palabra, dando lugar a una nueva deduplicación de estos dos últimos archivos. Después se lee el archivo \emph{enlacehola}, que al ser un enlace físico a \emph{hola} ve los mismos contenidos que éste. Después se borra el fichero hola, con lo que uno de sus enlaces deberá heredar sus entradas de las tablas de archivos y enlaces físicos. Se crea un nuevo archivo \emph{adios2} que se deduplica con los contenidos de \emph{adios}, y se le retira el permiso de escritura a ese archivo. Por último se ejecuta un listado de los archivos del directorio, donde se pueden observar los cambios acontecidos.
+
+\begin{figure}[h!]
+  \centering
+  \label{fig:db2}
+  \includegraphics[width=.6\linewidth]{imagenes/db2}
+  \caption{Aspecto de la BD tras los tests en figura \ref{fig:test2}}
+\end{figure}
+
+
+
+En la figura \ref{fig:db2} se nos muestra el estado de la base de datos tras los cambios descritos en el párrafo anterior. Se puede ver que \emph{adios} y \emph{adios2} están ahora deduplicados, que \emph{hola} ya no está, y en su lugar podemos encontrar uno de sus enlaces: \emph{enlacehola}, el cual se encuentra deduplicado con \emph{hola3}. Se observa también que \emph{hola2}, que no ha sido modificado desde el ejemplo anterior, sigue ocupando 5 bytes y ya no está deduplicado. Por último, en la tabla de enlaces vemos que la entrada de \emph{enlacehola} ya no está, al haber heredado éste el nombre de \emph{hola}, y que \emph{enlace2hola} tiene una entrada apuntando al primer enlace que se creó.
+
+Los ejemplos anteriores, aunque no son muy extensos, permiten observar toda la funcionalidad que proporciona el sistema de ficheros dedupfs. Y que éste es capaz que ofrecer una visión transparente de los ficheros al usuario, mientras que éstos se almacenan ocupando un menor espacio.
+
+\subsection{Estudio de rendimiento}
+
+Como se dijo en la introducción, el sistema de ficheros dedupfs permite ahorrar bastante espacio, pero es importante conocer cuáles son sus puntos fuertes y cuáles sus puntos débiles. Este sistema de ficheros se apoya en dejar ficheros vacíos como marcadores, y en usar una base de datos para almacenar la clave de dispersión de cada archivo y el lugar donde están almacenados los datos. El uso adicional de espacio para estos metadatos no es muy alto, pero puede llegar a ocasionar una mayor ocupación de espacio en disco en algunos escenarios. 
+
+En un escenario donde haya muchos archivos de tamaño relativamente pequeño, y no haya casi duplicados, este sistema de ficheros no conseguirá mejora de uso de espacio, e incluso puede llegar a ocupar más espacio que uno sin deduplicación. En un escenario más heterogéneo donde se encuentran archivos de diversos tamaños y existen deduplicados, dedupfs probablemente consiga una mejora de ocupación de espacio, aunque sea modesta. Aunque sin duda el caso más favorable para nuestro sistema de ficheros es aquel donde exista un buen número de archivos duplicados, como por ejemplo un directorio donde se almacenan copias de seguridad, etc.
+
+Para obtener una medida real de las diferencias de rendimiento del sistema de ficheros, se ha realizado un estudio con tres escenarios diferentes con los que comparar el uso de espacio en el sistema de ficheros entre dedupfs, y un sistema de ficheros sin deduplicación (\emph{ext4} en este caso):
+\begin{itemize}
+ \item \textbf{Código fuente del kernel linux}: El primer escenario es el código fuente completo del núcleo de linux 4.0.4. Este caso parece a priori el más desfavorable para dedupfs. Es un directorio con 48.948 archivos, que ocupa 648MiB en su versión sin deduplicación, y donde cabe esperar que el número de archivos duplicados no sea muy alto.
+ \item \textbf{Subdirectorio del usuario}: El segundo escenario es el subdirectorio del usuario (\texttt{\small /home}). En este directorio existen 16.964 archivos, con un tamaño total de 938MiB. En él se encuentran muchos archivos de configuración, de pequeño tamaño, así como archivos multimedia y de datos de mayor tamaño. Desconocemos a priori cuál será el número de duplicados.
+ \item \textbf{Directorio de copias de seguridad}: El último escenario es el que parece más favorable a dedupfs. Se trata de un directorio de copias de seguridad donde se encuentran 5 copias de seguridad de un directorio de datos de un servidor de juegos. En este directorio, aproximadamente el 75\% de los archivos es de pequeño tamaño (menores a 1KiB) pero también existen otros de tamaño considerablemente mayor. Al tratarse de 5 copias, es de esperar que haya un buen número de archivos duplicados, aunque los datos almacenados en él son bastante cambiantes, y podría no ser así. Las 5 copias suman 1374 archivos para un total de 1056MiB sin deduplicación.
+\end{itemize}
+
+Para llevar a cabo la comparación, se ha contabilizado el número de archivos existentes y tamaño en disco en la versión sin deduplicar, frente al número de archivos total y tamaño en disco del directorio raíz en dedupfs (esto contabiliza como ficheros tanto los marcadores como los de datos). Además, se ha observado para cada caso qué porcentaje de las entradas totales de la base de datos está deduplicada al menos una vez.
+
+\begin{center}
+\begin{tabular}{c|c|c|c|c|c|c|}
+\cline{2-6}
+& \multicolumn{2}{ c| }{No dedup} & \multicolumn{3}{ c| }{Dedupfs} \\ \cline{2-7}
+& Archivos & MiB & Archivos & MiB & Duplicados & Mejora \\ \hline
+\multicolumn{1}{ |c| }{Núcleo Linux} & 48948 & 648 & 97609 & 660 & 0,6\% & -1,85\%     \\ \hline
+\multicolumn{1}{ |c| }{Directorio /home} & 16964 & 938 & 32876 & 925 & 3,4\% & 1,38\%   \\ \hline
+\multicolumn{1}{ |c| }{Copias seguridad} & 1374 & 1056 & 1908 & 753 & 70\% & 28,7\% \\ \hline
+\end{tabular}
+\end{center}
+
+Los resultados obtenidos tras estudiar el rendimiento del sistema de ficheros se aproximan bastante a lo que cabía esperar. En el escenario del código fuente del kernel linux, el sistema dedupfs necesita más espacio que la versión sin deduplicación. Esto es debido a la gran cantidad de ficheros que se crean como marcador, y a que existen muy pocos deduplicados.
+
+En el escenario del directorio del usuario, se observa una mejora casi despreciable, puesto que, de un modo parecido al primer escenario, existe una cantidad muy alta de ficheros pequeños, y esta provoca que se generen muchos marcadores sin obtener casi mejora. Pese a todo, y aunque hay una cantidad muy pequeña de archivos duplicados, la mejora obtenida al deduplicar estos archivos, proporciona un ahorro de espacio suficiente para solventar el anterior problema.
+
+El último escenario ha sido el más favorable, como esperábamos. Con un ahorro de espacio de un 28,7\%, se trata de un éxito absoluto para dedupfs. Al tratarse de copias de seguridad, había una gran cantidad de archivos duplicados. De un total de 1354 entradas en la base de datos, el 70\% estaban deduplicados, quedando 533 archivos de datos diferentes que contenían información única. Sin duda merece la pena utilizar sistemas de ficheros de este tipo en escenarios donde hay archivos duplicados.
+
+Si equilibramos los tres escenarios estudiados, podemos observar que aunque en uno de ellos dedupfs tiene peor desempeño, con la mejora que se consigue en los otros dos se compensa sobradamente, y utilizar este sistema de ficheros en un sistema que aglutine a los tres tipos de escenarios sería ventajoso en cuanto al ahorro de espacio.
+
+
 
 \newpage
 \section{Anexo: Listado del código fuente}
 
+\subsection{}
 \iffalse 
 \begin{figure}[h!]
   \centering
@@ -202,7 +296,7 @@ Como se ha explicado anteriormente, para gestionar los archivos deduplicados, en
 
 
 \iffalse
-\lstdefinestyle{mystyle}{language=Pascal,
+\lstdefinestyle{mystyle}{language=C,
   breakatwhitespace=false,
   breaklines=true,
   basicstyle=\footnotesize
